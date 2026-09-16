@@ -165,7 +165,7 @@ public final class TNConsumableManager: ObservableObject {
     
     /// Processes a single transaction: credits balance (with dedup) and finishes it.
     /// (Xử lý 1 giao dịch: cộng số dư (chống trùng) và kết thúc giao dịch.)
-    private func processTransaction(_ transaction: Transaction) async {
+    private func processTransaction(_ transaction: StoreKit.Transaction) async {
         // Only process consumables that we configured
         // (Chỉ xử lý consumable đã config)
         guard let product = self.products.first(where: { $0.id == transaction.productID }) else {
@@ -267,6 +267,7 @@ public final class TNConsumableManager: ObservableObject {
                     guard case .verified(let transaction) = verification else {
                         completion(.failure(ConsumableError.verificationFailed))
                         return
+                    }
                     
                     // Credit balance + mark as processed + finish transaction
                     // (Cộng số dư + đánh dấu đã xử lý + kết thúc giao dịch)
