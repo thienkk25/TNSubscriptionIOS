@@ -423,7 +423,16 @@ Show paywall when user taps a locked feature. (Hiện paywall khi user bấm và
 
 ### UIKit
 
+> Uses `PaywallConfigs` defined in [Section 3 — Multiple Paywall Configs](#multiple-paywall-configs-nhiều-config-paywall).
+> (Dùng `PaywallConfigs` đã định nghĩa ở Mục 3.)
+
 ```swift
+// Recap: PaywallConfigs was defined earlier (Nhắc lại: PaywallConfigs đã định nghĩa ở trên)
+// enum PaywallConfigs {
+//     static let `default` = DefaultPaywallConfig(appName: "<YOUR_APP_NAME>", features: [...], accentColor: .cyan)
+//     static let sale = DefaultPaywallConfig(appName: "<YOUR_APP_NAME> — 🔥 70% OFF", features: [...], accentColor: .orange)
+// }
+
 // ✅ isPremium — any paying user can access (bất kỳ user trả phí nào cũng dùng được)
 @objc func removeAdsTapped() {
     guard TNSubscriptionIOS.shared.isPremium else {
