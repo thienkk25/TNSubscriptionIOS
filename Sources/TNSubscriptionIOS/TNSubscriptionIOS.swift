@@ -1,7 +1,7 @@
 import Foundation
 import StoreKit
 import RevenueCat
-import SwiftUI
+@_exported import SwiftUI
 import Combine
 
 // MARK: - TNSubscriptionIOS Configuration
