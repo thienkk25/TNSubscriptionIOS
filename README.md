@@ -474,9 +474,153 @@ struct FeatureView: View {
 }
 ```
 
+## 5. Consumable Purchases (Mua consumable — coins, gems, credits)
+
+> For one-time purchases that add a quantity (e.g. coins, gems, credits).
+> (Cho việc mua 1 lần để cộng số lượng, ví dụ coins, gems, credits.)
+
+### Configure (Cấu hình)
+
+```swift
+// At app launch, after TNSubscriptionIOS.configure(...)
+// (Khi app khởi động, sau TNSubscriptionIOS.configure(...))
+TNConsumableManager.configure(products: [
+    TNConsumableProduct(id: "com.yourcompany.yourapp.100coins",  reward: 100,  currency: "coins"),
+    TNConsumableProduct(id: "com.yourcompany.yourapp.500coins",  reward: 500,  currency: "coins"),
+    TNConsumableProduct(id: "com.yourcompany.yourapp.1500coins", reward: 1500, currency: "coins"),
+])
+```
+
+### UIKit
+
+```swift
+import TNSubscriptionIOS
+import Combine
+
+class ShopViewController: UIViewController {
+    private var cancellables = Set<AnyCancellable>()
+    let consumable = TNConsumableManager.shared
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        // Load products from App Store (Load sản phẩm từ App Store)
+        consumable.loadProducts()
+        
+        // Observe balance changes (Lắng nghe thay đổi số dư)
+        consumable.$balances
+            .receive(on: RunLoop.main)
+            .sink { [weak self] balances in
+                let coins = balances["coins"] ?? 0
+                self?.coinLabel.text = "\(coins) coins"
+            }
+            .store(in: &cancellables)
+    }
+    
+    @objc func buy100CoinsTapped() {
+        consumable.purchase(productId: "com.yourcompany.yourapp.100coins") { result in
+            switch result {
+            case .success(let reward):
+                print("Added \(reward) coins!") // (Đã cộng \(reward) coins!)
+            case .failure(let error):
+                if let e = error as? TNConsumableManager.ConsumableError, case .userCancelled = e { return }
+                print("Error: \(error.localizedDescription)")
+            }
+        }
+    }
+    
+    // Deduct coins when user spends (Trừ coins khi user tiêu)
+    @objc func useFeatureTapped() {
+        guard consumable.deductBalance(10, for: "coins") else {
+            // Not enough coins → show shop (Không đủ coins → hiện shop)
+            return
+        }
+        // Feature unlocked (Feature đã mở khóa)
+        activateFeature()
+    }
+}
+```
+
+### SwiftUI
+
+```swift
+import TNSubscriptionIOS
+
+struct CoinShopView: View {
+    @ObservedObject var shop = TNConsumableManager.shared
+    @State private var errorMessage: String?
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            // Current balance (Số dư hiện tại)
+            Text("\(shop.balance(for: "coins")) 🪙")
+                .font(.largeTitle.bold())
+            
+            if shop.isLoadingProducts {
+                ProgressView("Loading...")
+            } else {
+                // Show available products (Hiển thị sản phẩm)
+                ForEach(shop.storeProducts, id: \.id) { product in
+                    Button {
+                        buyProduct(product)
+                    } label: {
+                        HStack {
+                            if let config = shop.consumableProduct(for: product.id) {
+                                Text("+\(config.reward) \(config.currency)")
+                            }
+                            Spacer()
+                            Text(product.displayPrice).bold()
+                        }
+                        .padding()
+                        .background(.ultraThinMaterial)
+                        .cornerRadius(12)
+                    }
+                    .disabled(shop.isPurchasing)
+                }
+            }
+            
+            if let error = errorMessage {
+                Text(error).foregroundStyle(.red).font(.caption)
+            }
+        }
+        .padding()
+        .onAppear { shop.loadProducts() }
+    }
+    
+    private func buyProduct(_ product: Product) {
+        shop.purchase(product: product) { result in
+            switch result {
+            case .success(let reward):
+                errorMessage = nil
+                print("+\(reward) coins!") // (Đã cộng \(reward) coins!)
+            case .failure(let error):
+                if let e = error as? TNConsumableManager.ConsumableError, case .userCancelled = e { return }
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+}
+
+// Spending coins (Tiêu coins)
+struct GameView: View {
+    @ObservedObject var shop = TNConsumableManager.shared
+    
+    var body: some View {
+        Button("Use Hint (-10 coins)") {  // (Dùng gợi ý, -10 coins)
+            if shop.deductBalance(10, for: "coins") {
+                showHint()
+            } else {
+                // Not enough coins (Không đủ coins)
+            }
+        }
+        .disabled(!shop.canAfford(10, currency: "coins"))
+    }
+}
+```
+
 ---
 
-## 5. TN Studio Proxy Headers
+## 6. TN Studio Proxy Headers
 
 Package auto-generates a persistent `clientId` (Keychain-backed). Use for `X-Client-Id` header when calling TN Studio proxy APIs. (Package tự tạo `clientId` persistent lưu Keychain. Dùng cho header `X-Client-Id` khi gọi TN Studio proxy API.)
 
@@ -540,6 +684,42 @@ request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
 | `TNSubscriptionIOS.isRecommendedPackage(_:)` | Is recommended package, yearly (Có phải gói recommended, yearly) |
 | `TNSubscriptionIOS.packageSortOrder(_:)` | Sort order for package types (Thứ tự sắp xếp gói) |
 
+### `TNConsumableManager.shared`
+
+#### Properties — `@Published`, realtime observable (Lắng nghe realtime)
+
+| Property | Type | Description (Mô tả) |
+|---|---|---|
+| `storeProducts` | `[Product]` | StoreKit products loaded from App Store (Sản phẩm đã load từ App Store) |
+| `isLoadingProducts` | `Bool` | Loading products (Đang load sản phẩm) |
+| `isPurchasing` | `Bool` | Purchase in progress (Đang xử lý mua) |
+| `balances` | `[String: Int]` | Current balances per currency (Số dư hiện tại theo loại tiền) |
+| `loadError` | `String?` | Error loading products (Lỗi khi load sản phẩm) |
+
+#### Methods (Phương thức)
+
+| Method | Description (Mô tả) |
+|---|---|
+| `loadProducts()` | Load StoreKit products (Load sản phẩm từ App Store) |
+| `purchase(productId:completion:)` | Purchase by product ID (Mua theo product ID) |
+| `purchase(product:completion:)` | Purchase by StoreKit Product (Mua bằng StoreKit Product) |
+| `balance(for: String) → Int` | Get balance for currency (Lấy số dư cho loại tiền) |
+| `addBalance(_:for:)` | Add to balance (Cộng vào số dư) |
+| `deductBalance(_:for:) → Bool` | Deduct from balance, returns false if insufficient (Trừ số dư, trả false nếu không đủ) |
+| `setBalance(_:for:)` | Set balance to exact value, for server sync (Đặt số dư chính xác, dùng khi sync server) |
+| `canAfford(_:currency:) → Bool` | Check if user can afford amount (Kiểm tra user có đủ số dư) |
+| `consumableProduct(for:)` | Get configured product by ID (Lấy sản phẩm đã config theo ID) |
+| `products(for:)` | Get all products for a currency (Lấy tất cả sản phẩm cho loại tiền) |
+| `storeProduct(for:)` | Get StoreKit Product by ID (Lấy StoreKit Product theo ID) |
+
+### `TNConsumableProduct`
+
+| Property | Type | Description (Mô tả) |
+|---|---|---|
+| `id` | `String` | StoreKit Product ID (e.g. `"com.app.100coins"`) |
+| `reward` | `Int` | Amount added after purchase (Số lượng cộng sau khi mua) |
+| `currency` | `String` | Currency type name (Tên loại tiền, e.g. `"coins"`, `"gems"`) |
+
 ### `DefaultPaywallConfig`
 
 All properties have sensible defaults. Only customize what you need. (Tất cả properties có giá trị mặc định. Chỉ cần customize phần muốn thay đổi.)
@@ -566,3 +746,4 @@ All properties have sensible defaults. Only customize what you need. (Tất cả
 ## License
 
 MIT @ Thien Nguyen
+
