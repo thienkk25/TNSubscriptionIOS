@@ -6,19 +6,77 @@ import Combine
 
 // MARK: - TNSubscriptionIOS Configuration
 
+/// A single entitlement definition with its associated StoreKit Product IDs.
+///
+/// Example:
+/// ```swift
+/// TNEntitlement(id: "Premium", productIDs: ["com.app.weekly", "com.app.yearly"])
+/// TNEntitlement(id: "Sale", productIDs: ["com.app.sale_yearly"])
+/// ```
+public struct TNEntitlement {
+    /// The entitlement identifier as configured in RevenueCat (e.g. "Premium").
+    public let id: String
+    
+    /// The set of StoreKit Product IDs that grant this entitlement.
+    public let productIDs: Set<String>
+    
+    public init(id: String, productIDs: Set<String>) {
+        self.id = id
+        self.productIDs = productIDs
+    }
+}
+
 /// Configuration for the TNSubscriptionIOS core engine.
 /// Host apps must call `TNSubscriptionIOS.configure(...)` before using any functionality.
+///
+/// Usage:
+/// ```swift
+/// TNSubscriptionIOS.configure(config: TNSubscriptionConfig(
+///     apiKey: "appl_xxxxx",
+///     entitlements: [
+///         TNEntitlement(id: "Premium", productIDs: ["com.app.weekly", "com.app.monthly", "com.app.yearly"]),
+///         TNEntitlement(id: "Sale", productIDs: ["com.app.sale_yearly"]),
+///     ]
+/// ))
+/// ```
 public struct TNSubscriptionConfig {
     public let apiKey: String
-    public let entitlementId: String
-    public let productIDs: Set<String>
+    public let entitlements: [TNEntitlement]
     public let isIAPEnabled: Bool
+    
+    /// All product IDs across all entitlements (flattened for StoreKit lookup).
+    var allProductIDs: Set<String> {
+        entitlements.reduce(into: Set<String>()) { $0.formUnion($1.productIDs) }
+    }
+    
+    /// All entitlement IDs (for RevenueCat lookup).
+    var allEntitlementIDs: [String] {
+        entitlements.map(\.id)
+    }
     
     /// - Parameters:
     ///   - apiKey: Your RevenueCat API key.
-    ///   - entitlementId: The entitlement identifier configured in RevenueCat (e.g. "Premium").
-    ///   - productIDs: The set of StoreKit Product IDs to validate locally (e.g. "com.app.weekly").
+    ///   - entitlements: Array of entitlements, each with its product IDs.
     ///   - isIAPEnabled: Set to `false` during development to bypass paywall. Default is `true`.
+    public init(
+        apiKey: String,
+        entitlements: [TNEntitlement],
+        isIAPEnabled: Bool = true
+    ) {
+        self.apiKey = apiKey
+        self.entitlements = entitlements
+        self.isIAPEnabled = isIAPEnabled
+    }
+    
+    /// Convenience initializer for apps with a single entitlement.
+    ///
+    /// ```swift
+    /// TNSubscriptionConfig(
+    ///     apiKey: "appl_xxx",
+    ///     entitlementId: "Premium",
+    ///     productIDs: ["com.app.weekly", "com.app.yearly"]
+    /// )
+    /// ```
     public init(
         apiKey: String,
         entitlementId: String = "Premium",
@@ -26,8 +84,7 @@ public struct TNSubscriptionConfig {
         isIAPEnabled: Bool = true
     ) {
         self.apiKey = apiKey
-        self.entitlementId = entitlementId
-        self.productIDs = productIDs
+        self.entitlements = [TNEntitlement(id: entitlementId, productIDs: productIDs)]
         self.isIAPEnabled = isIAPEnabled
     }
 }
@@ -41,16 +98,25 @@ public struct TNSubscriptionConfig {
 /// // 1. Configure once at app launch
 /// TNSubscriptionIOS.configure(config: TNSubscriptionConfig(
 ///     apiKey: "appl_xxxxx",
-///     productIDs: ["com.app.weekly", "com.app.yearly"]
+///     entitlements: [
+///         TNEntitlement(id: "Premium", productIDs: ["com.app.weekly", "com.app.yearly"]),
+///         TNEntitlement(id: "Sale", productIDs: ["com.app.sale_yearly"]),
+///     ]
 /// ))
 ///
-/// // 2. Check premium status
+/// // 2. Check premium status (ANY entitlement active)
 /// if TNSubscriptionIOS.shared.isPremium { ... }
 ///
-/// // 3. Present default paywall
+/// // 3. Check specific entitlement
+/// if TNSubscriptionIOS.shared.hasEntitlement("Sale") { ... }
+///
+/// // 4. Get all active entitlements
+/// let active = TNSubscriptionIOS.shared.activeEntitlements // Set<String>
+///
+/// // 5. Present default paywall
 /// TNSubscriptionIOS.presentDefaultPaywall(from: vc, config: ...)
 ///
-/// // 4. Or present custom paywall
+/// // 6. Or present custom paywall
 /// TNSubscriptionIOS.presentPaywall(from: vc) { MyCustomPaywallView() }
 /// ```
 public final class TNSubscriptionIOS: NSObject, ObservableObject {
@@ -70,7 +136,13 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     @Published public var entitlementState: EntitlementState = .unknown
     @Published public var customerInfo: CustomerInfo?
+    
+    /// `true` if ANY configured entitlement is currently active.
     @Published public var isPremium: Bool = false
+    
+    /// The set of currently active entitlement IDs (e.g. `["Premium", "Sale"]`).
+    @Published public var activeEntitlements: Set<String> = []
+    
     @Published public var availablePackages: [Package] = []
     @Published public var isLoadingOfferings = false
     @Published public var isPurchasing = false
@@ -105,6 +177,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         if !config.isIAPEnabled {
             self.entitlementState = .unlocked
             self.isPremium = true
+            self.activeEntitlements = Set(config.allEntitlementIDs)
             return
         }
         
@@ -116,11 +189,11 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         // 1. Immediate Synchronous Check (Cache) to prevent UI flicker
         if let cached = Purchases.shared.cachedCustomerInfo {
             self.customerInfo = cached
-            let isActive = cached.entitlements[config.entitlementId]?.isActive == true
+            let active = resolveActiveEntitlements(from: cached)
             
-            // Only trust the cache if it's active. If it's inactive, we must wait for
-            // StoreKit 2 to confirm (stay .unknown) to prevent false paywall flickers.
-            if isActive {
+            // Only trust the cache if active. If inactive, stay .unknown to prevent false paywall flickers.
+            if !active.isEmpty {
+                self.activeEntitlements = active
                 self.entitlementState = .unlocked
                 self.isPremium = true
             } else {
@@ -147,6 +220,24 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     deinit {
         updatesTask?.cancel()
+    }
+    
+    // MARK: - Public Entitlement Queries
+    
+    /// Checks if a specific entitlement is currently active.
+    ///
+    /// ```swift
+    /// if TNSubscriptionIOS.shared.hasEntitlement("Sale") {
+    ///     // Show sale-specific content
+    /// }
+    /// ```
+    public func hasEntitlement(_ entitlementId: String) -> Bool {
+        activeEntitlements.contains(entitlementId)
+    }
+    
+    /// Returns the product IDs configured for a specific entitlement.
+    public func productIDs(for entitlementId: String) -> Set<String> {
+        config.entitlements.first(where: { $0.id == entitlementId })?.productIDs ?? []
     }
     
     // MARK: - Shared Client ID (TN Studio Proxy & RevenueCat)
@@ -225,18 +316,33 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     // MARK: - Entitlement Resolution
     
+    /// Resolves active entitlements from a CustomerInfo object.
+    private func resolveActiveEntitlements(from info: CustomerInfo) -> Set<String> {
+        var active = Set<String>()
+        for entitlement in config.entitlements {
+            if info.entitlements[entitlement.id]?.isActive == true {
+                active.insert(entitlement.id)
+            }
+        }
+        return active
+    }
+    
     /// Main source of truth resolver
     @MainActor
     public func resolveEntitlement() async {
         if !config.isIAPEnabled {
-            updateState(isPremium: true, state: .unlocked)
+            updateState(isPremium: true, state: .unlocked, activeEntitlements: Set(config.allEntitlementIDs))
             return
         }
         
         // Priority 1: StoreKit 2 Local Entitlements (Works Offline, highly reliable)
-        if await syncWithStoreKit() {
+        let storeKitActive = await syncWithStoreKit()
+        if !storeKitActive.isEmpty {
             if self.entitlementState != .unlocked {
-                updateState(isPremium: true, state: .unlocked)
+                updateState(isPremium: true, state: .unlocked, activeEntitlements: storeKitActive)
+            } else {
+                // Merge with existing active entitlements
+                self.activeEntitlements.formUnion(storeKitActive)
             }
             // Fire and forget RC sync for backend parity
             Task { await syncWithRevenueCat() }
@@ -244,66 +350,92 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         }
         
         // Priority 2: RevenueCat Network/Cache Check
-        let rcHasPremium = await syncWithRevenueCat()
-        let newState: EntitlementState = rcHasPremium ? .unlocked : .locked
-        if self.entitlementState != newState {
-            updateState(isPremium: rcHasPremium, state: newState)
+        let rcActive = await syncWithRevenueCat()
+        let hasPremium = !rcActive.isEmpty
+        let newState: EntitlementState = hasPremium ? .unlocked : .locked
+        if self.entitlementState != newState || self.activeEntitlements != rcActive {
+            updateState(isPremium: hasPremium, state: newState, activeEntitlements: rcActive)
         }
     }
     
-    /// Checks StoreKit 2 local state directly
-    private func syncWithStoreKit() async -> Bool {
+    /// Checks StoreKit 2 local state directly. Returns the set of active entitlement IDs.
+    private func syncWithStoreKit() async -> Set<String> {
         let cachedValidProductID = UserDefaults.standard.string(forKey: productIDCacheKey)
+        var activeIDs = Set<String>()
         
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }
             
             if transaction.revocationDate == nil {
-                // Priority 1: Check against configured Premium Product IDs
-                if config.productIDs.contains(transaction.productID) {
-                    return true
+                // Check against configured Product IDs per entitlement
+                for entitlement in config.entitlements {
+                    if entitlement.productIDs.contains(transaction.productID) {
+                        activeIDs.insert(entitlement.id)
+                    }
                 }
                 
-                // Priority 2: Fallback to dynamically cached Product ID from RevenueCat
-                if let cachedID = cachedValidProductID, !cachedID.isEmpty {
+                // Fallback to dynamically cached Product ID from RevenueCat
+                if activeIDs.isEmpty, let cachedID = cachedValidProductID, !cachedID.isEmpty {
                     if transaction.productID == cachedID {
-                        return true
+                        // We don't know which entitlement it belongs to, mark first as active
+                        if let first = config.entitlements.first {
+                            activeIDs.insert(first.id)
+                        }
                     }
                 }
             }
         }
-        return false
+        return activeIDs
     }
     
-    /// Syncs and checks RevenueCat state
+    /// Syncs and checks RevenueCat state. Returns the set of active entitlement IDs.
     @MainActor
     @discardableResult
-    private func syncWithRevenueCat() async -> Bool {
+    private func syncWithRevenueCat() async -> Set<String> {
         do {
             let info = try await Purchases.shared.customerInfo()
             updateState(info: info)
-            if let entitlement = info.entitlements[config.entitlementId], entitlement.isActive {
-                UserDefaults.standard.set(entitlement.productIdentifier, forKey: productIDCacheKey)
-                return true
+            let active = resolveActiveEntitlements(from: info)
+            
+            // Cache active product IDs for StoreKit offline fallback
+            for entitlement in config.entitlements {
+                if let ent = info.entitlements[entitlement.id], ent.isActive {
+                    UserDefaults.standard.set(ent.productIdentifier, forKey: productIDCacheKey)
+                    break // Cache one is enough for fallback
+                }
             }
-            return false
+            return active
         } catch {
             if let cached = Purchases.shared.cachedCustomerInfo {
                 updateState(info: cached)
-                if let entitlement = cached.entitlements[config.entitlementId], entitlement.isActive {
-                    UserDefaults.standard.set(entitlement.productIdentifier, forKey: productIDCacheKey)
-                    return true
+                let active = resolveActiveEntitlements(from: cached)
+                for entitlement in config.entitlements {
+                    if let ent = cached.entitlements[entitlement.id], ent.isActive {
+                        UserDefaults.standard.set(ent.productIdentifier, forKey: productIDCacheKey)
+                        break
+                    }
                 }
+                return active
             }
-            return false
+            return []
         }
     }
     
     // MARK: - Offerings & Purchase
     
-    /// The product ID of the user's current active plan, if any.
+    /// The product ID of the user's current active plan (first active entitlement found).
     public var currentPlanProductID: String? {
-        customerInfo?.entitlements[config.entitlementId]?.productIdentifier
+        for entitlement in config.entitlements {
+            if let ent = customerInfo?.entitlements[entitlement.id], ent.isActive {
+                return ent.productIdentifier
+            }
+        }
+        return nil
+    }
+    
+    /// The product ID for a specific entitlement, if active.
+    public func currentProductID(for entitlementId: String) -> String? {
+        customerInfo?.entitlements[entitlementId]?.productIdentifier
     }
     
     /// A human-readable display name for the user's current plan.
@@ -427,19 +559,21 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     private func restorePurchasesAsync() async throws -> Bool {
         let previousState = self.entitlementState
         let previousPremium = self.isPremium
+        let previousActive = self.activeEntitlements
         
         // Attempt StoreKit 2 sync first
         do {
             try await AppStore.sync()
         } catch StoreKitError.userCancelled {
-            updateState(isPremium: previousPremium, state: previousState)
+            updateState(isPremium: previousPremium, state: previousState, activeEntitlements: previousActive)
             return false
         } catch {
             // Proceed to RevenueCat fallback check
         }
         
-        if await syncWithStoreKit() {
-            updateState(isPremium: true, state: .unlocked)
+        let storeKitActive = await syncWithStoreKit()
+        if !storeKitActive.isEmpty {
+            updateState(isPremium: true, state: .unlocked, activeEntitlements: storeKitActive)
             Self.syncClientIdToRevenueCat()
             Task { try? await Purchases.shared.restorePurchases() }
             return true
@@ -447,26 +581,29 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         
         do {
             let info = try await Purchases.shared.restorePurchases()
-            let isSuccess = info.entitlements[config.entitlementId]?.isActive == true
-            updateState(isPremium: isSuccess, state: isSuccess ? .unlocked : .locked, info: info)
+            let active = resolveActiveEntitlements(from: info)
+            let isSuccess = !active.isEmpty
+            updateState(isPremium: isSuccess, state: isSuccess ? .unlocked : .locked, activeEntitlements: active, info: info)
             if isSuccess { Self.syncClientIdToRevenueCat() }
             return isSuccess
         } catch {
-            updateState(isPremium: previousPremium, state: previousState)
+            updateState(isPremium: previousPremium, state: previousState, activeEntitlements: previousActive)
             throw error
         }
     }
     
     @MainActor
-    private func updateState(isPremium: Bool? = nil, state: EntitlementState? = nil, info: CustomerInfo? = nil) {
+    private func updateState(isPremium: Bool? = nil, state: EntitlementState? = nil, activeEntitlements: Set<String>? = nil, info: CustomerInfo? = nil) {
         if !config.isIAPEnabled {
             self.isPremium = true
             self.entitlementState = .unlocked
+            self.activeEntitlements = Set(config.allEntitlementIDs)
             if let info = info { self.customerInfo = info }
             return
         }
         if let isPremium = isPremium { self.isPremium = isPremium }
         if let state = state { self.entitlementState = state }
+        if let activeEntitlements = activeEntitlements { self.activeEntitlements = activeEntitlements }
         if let info = info { self.customerInfo = info }
     }
     
@@ -475,16 +612,23 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         if !config.isIAPEnabled {
             self.isPremium = true
             self.entitlementState = .unlocked
+            self.activeEntitlements = Set(config.allEntitlementIDs)
             self.customerInfo = info
             return
         }
-        let isActive = info.entitlements[config.entitlementId]?.isActive == true
+        let active = resolveActiveEntitlements(from: info)
+        let isActive = !active.isEmpty
         self.entitlementState = isActive ? .unlocked : .locked
         self.isPremium = isActive
+        self.activeEntitlements = active
         self.customerInfo = info
         
-        if isActive, let productID = info.entitlements[config.entitlementId]?.productIdentifier {
-            UserDefaults.standard.set(productID, forKey: productIDCacheKey)
+        // Cache first active product ID for offline fallback
+        for entitlement in config.entitlements {
+            if let ent = info.entitlements[entitlement.id], ent.isActive {
+                UserDefaults.standard.set(ent.productIdentifier, forKey: productIDCacheKey)
+                break
+            }
         }
         
         // Refresh entitlement state after 1 second sandbox delay safety net
@@ -504,15 +648,22 @@ extension TNSubscriptionIOS: PurchasesDelegate {
             if !self.config.isIAPEnabled {
                 self.isPremium = true
                 self.entitlementState = .unlocked
+                self.activeEntitlements = Set(self.config.allEntitlementIDs)
                 return
             }
-            let entitlement = customerInfo.entitlements[self.config.entitlementId]
-            let isActive = entitlement?.isActive == true
             
-            if isActive, let productID = entitlement?.productIdentifier {
-                UserDefaults.standard.set(productID, forKey: self.productIDCacheKey)
+            let active = self.resolveActiveEntitlements(from: customerInfo)
+            let isActive = !active.isEmpty
+            
+            // Cache first active product ID
+            for entitlement in self.config.entitlements {
+                if let ent = customerInfo.entitlements[entitlement.id], ent.isActive {
+                    UserDefaults.standard.set(ent.productIdentifier, forKey: self.productIDCacheKey)
+                    break
+                }
             }
             
+            self.activeEntitlements = active
             self.entitlementState = isActive ? .unlocked : .locked
             self.isPremium = isActive
         }
