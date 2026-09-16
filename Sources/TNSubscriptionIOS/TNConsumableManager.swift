@@ -114,29 +114,88 @@ public final class TNConsumableManager: ObservableObject {
         self.products = products
         
         // Load saved balances from UserDefaults
+        // (Load số dư đã lưu từ UserDefaults)
         let currencies = Set(products.map(\.currency))
         for currency in currencies {
             let saved = UserDefaults.standard.integer(forKey: Self.balanceKeyPrefix + currency)
             balances[currency] = saved
         }
         
-        // Listen for external StoreKit 2 transactions (e.g. pending purchases completing)
-        // (Lắng nghe giao dịch StoreKit 2 bên ngoài, ví dụ giao dịch pending hoàn thành)
+        // 1. Recover unfinished transactions from previous sessions
+        //    (Khôi phục giao dịch chưa hoàn thành từ phiên trước —
+        //     xử lý trường hợp mạng chậm/app crash giữa chừng khi mua)
+        Task {
+            await recoverUnfinishedTransactions()
+        }
+        
+        // 2. Listen for external StoreKit 2 transactions (e.g. pending purchases completing)
+        //    (Lắng nghe giao dịch StoreKit 2 realtime, ví dụ giao dịch pending hoàn thành)
         updatesTask = Task {
             for await result in Transaction.updates {
                 guard case .verified(let transaction) = result else { continue }
-                if let product = self.products.first(where: { $0.id == transaction.productID }) {
-                    await MainActor.run {
-                        self.addBalance(product.reward, for: product.currency)
-                    }
-                    await transaction.finish()
-                }
+                await processTransaction(transaction)
             }
         }
     }
     
     deinit {
         updatesTask?.cancel()
+    }
+    
+    // MARK: - Transaction Recovery
+    
+    /// Key prefix for tracking which transactions have been credited.
+    /// (Prefix key để theo dõi giao dịch nào đã được cộng tiền.)
+    private static let processedTxKeyPrefix = "tn_consumable_tx_"
+    
+    /// Recovers any unfinished consumable transactions from previous sessions.
+    /// Handles: network drops, app crash during purchase, pending approvals completing.
+    /// (Khôi phục giao dịch consumable chưa hoàn thành từ phiên trước.
+    ///  Xử lý: mất mạng, app crash khi mua, giao dịch pending được duyệt.)
+    private func recoverUnfinishedTransactions() async {
+        for await result in Transaction.unfinished {
+            guard case .verified(let transaction) = result else { continue }
+            await processTransaction(transaction)
+        }
+        
+        #if DEBUG
+        print("[TNConsumable] Unfinished transaction recovery complete. (Khôi phục giao dịch chưa hoàn thành xong.)")
+        #endif
+    }
+    
+    /// Processes a single transaction: credits balance (with dedup) and finishes it.
+    /// (Xử lý 1 giao dịch: cộng số dư (chống trùng) và kết thúc giao dịch.)
+    private func processTransaction(_ transaction: Transaction) async {
+        // Only process consumables that we configured
+        // (Chỉ xử lý consumable đã config)
+        guard let product = self.products.first(where: { $0.id == transaction.productID }) else {
+            return
+        }
+        
+        // Dedup: skip if this transaction was already credited
+        // (Chống trùng: bỏ qua nếu giao dịch này đã được cộng tiền rồi)
+        let txKey = Self.processedTxKeyPrefix + "\(transaction.id)"
+        if UserDefaults.standard.bool(forKey: txKey) {
+            // Already processed, just finish
+            // (Đã xử lý rồi, chỉ finish)
+            await transaction.finish()
+            return
+        }
+        
+        // Credit balance (Cộng số dư)
+        await MainActor.run {
+            self.addBalance(product.reward, for: product.currency)
+        }
+        
+        // Mark as processed (Đánh dấu đã xử lý)
+        UserDefaults.standard.set(true, forKey: txKey)
+        
+        // Finish transaction (Kết thúc giao dịch)
+        await transaction.finish()
+        
+        #if DEBUG
+        print("[TNConsumable] Recovered transaction \(transaction.id): +\(product.reward) \(product.currency)")
+        #endif
     }
     
     // MARK: - Load Products
@@ -208,16 +267,14 @@ public final class TNConsumableManager: ObservableObject {
                     guard case .verified(let transaction) = verification else {
                         completion(.failure(ConsumableError.verificationFailed))
                         return
-                    }
                     
-                    // Add reward to balance (Cộng reward vào số dư)
-                    await MainActor.run {
-                        self.addBalance(config.reward, for: config.currency)
-                    }
-                    
-                    // Finish transaction (required for consumables)
-                    // (Kết thúc giao dịch, bắt buộc với consumable)
-                    await transaction.finish()
+                    // Credit balance + mark as processed + finish transaction
+                    // (Cộng số dư + đánh dấu đã xử lý + kết thúc giao dịch)
+                    // Uses processTransaction for dedup safety — if app crashes here,
+                    // recoverUnfinishedTransactions() will handle it on next launch.
+                    // (Dùng processTransaction để chống trùng — nếu app crash ở đây,
+                    //  recoverUnfinishedTransactions() sẽ xử lý khi mở lại.)
+                    await processTransaction(transaction)
                     
                     completion(.success(config.reward))
                     
