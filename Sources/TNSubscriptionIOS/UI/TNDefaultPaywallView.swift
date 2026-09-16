@@ -80,7 +80,7 @@ struct TNDefaultPaywallView: View {
                     ?? manager.availablePackages.first
             }
         }
-        .onChange(of: manager.availablePackages.map(\.identifier)) { _, _ in
+        .onChange(of: manager.availablePackages.map(\.identifier)) { _ in
             guard selectedPackage == nil, !manager.availablePackages.isEmpty else { return }
             selectedPackage = manager.availablePackages.first(where: TNSubscriptionIOS.isRecommendedPackage)
                 ?? manager.availablePackages.first
