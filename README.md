@@ -4,6 +4,7 @@ A reusable Swift Package for iOS subscription management powered by RevenueCat. 
 
 - Built-in paywall UI **or** bring your own custom paywall (Paywall có sẵn **hoặc** tự custom hoàn toàn)
 - **Multiple entitlements** support (Hỗ trợ **nhiều entitlements**)
+- **RevenueCat In-App Currencies** support (Hỗ trợ **tiền tệ ảo/coins/gems/credits** đồng bộ Cloud RevenueCat)
 - Works with both **UIKit** and **SwiftUI** (Hoạt động với cả **UIKit** và **SwiftUI**)
 
 ---
@@ -629,7 +630,169 @@ struct GameView: View {
 
 ---
 
-## 6. TN Studio Proxy Headers
+## 6. RevenueCat In-App Currencies (Tiền tệ trong app / Virtual Currencies)
+
+> Cloud-synced currencies (coins, gems, credits) managed directly by RevenueCat. (Tiền ảo lưu trữ và đồng bộ đám mây trực tiếp qua RevenueCat.)  
+> Official Docs: [RevenueCat In-App Currency](https://www.revenuecat.com/docs/offerings/virtual-currency) (Tài liệu chính thức từ RevenueCat)
+
+### Key Rules & Limits (Lưu ý quan trọng & Giới hạn từ RevenueCat)
+
+- **Capacity & Limits (Giới hạn số lượng)**: Up to 100 currencies per project; balance between 0 and 2,000,000,000 (2 billion); negative balances not supported. (Tối đa 100 loại tiền tệ / project; số dư tối đa 2 tỷ; không hỗ trợ số dư âm.)
+- **Non-transferable on Restore (Không chuyển giao khi Restore)**: Unlike subscriptions, virtual currencies cannot be transferred across accounts during restore. (Khác với subscription, tiền ảo không thể chuyển qua tài khoản khác khi restore.)
+- **Auto-Expiration Priority (Thứ tự ưu tiên hết hạn)**: Expiring currencies are automatically consumed first by RevenueCat. (RevenueCat tự động ưu tiên trừ tiền sắp hết hạn trước.)
+- **Server-Side Security (Bảo mật chi tiêu phía server)**: Currency deductions require Developer API with Secret Key — must be initiated via Backend or TN Studio Proxy Gateway, never from client directly. (Trừ tiền yêu cầu Secret Key qua Backend hoặc TN Studio Proxy Gateway, không nhúng key trên app client.)
+- **Idempotency (Chống trùng giao dịch)**: Pass `Idempotency-Key` (UUID) to guarantee exactly-once execution during retries. (Header `Idempotency-Key` đảm bảo chỉ trừ tiền tối đa 1 lần khi mạng bị timeout/retry.)
+
+### Consumables vs In-App Currencies: When to use which? (Khi nào dùng cái nào?)
+
+| Feature (Tiêu chí) | `TNConsumableManager` (StoreKit 2) | `TNInAppCurrencyManager` (RevenueCat) |
+|---|---|---|
+| **Balance Storage (Lưu trữ số dư)** | Local device (`UserDefaults`) (Thiết bị cục bộ) | RevenueCat Cloud (Đồng bộ đám mây qua App User ID) |
+| **Subscription Perks (Gắn với gói Subscription)** | Not supported (Không hỗ trợ tự cộng định kỳ) | ✅ Auto-refill on renewal (Tự cộng định kỳ mỗi chu kỳ gia hạn) |
+| **Expiration (Hạn dùng)** | Not supported (Không hỗ trợ) | ✅ Configurable on dashboard (Cấu hình trên dashboard) |
+| **Anti-cheat / Fraud (Chống gian lận)** | Basic local client (Cơ bản trên client) | ✅ Server-side validated (Bảo vệ và xác thực phía server) |
+| **Restore Behavior (Khôi phục)** | Recovers unfinished transactions (Khôi phục giao dịch dang dở) | Tied to User ID, non-transferable (Gắn theo User ID, không chuyển nhượng) |
+
+### Dashboard Setup (Cấu hình trên RevenueCat Dashboard)
+
+1. Open RevenueCat Dashboard → Project → **Product Catalog** → **In-App Currencies**. (Mở RevenueCat Dashboard → chọn Project → Product Catalog → In-App Currencies.)
+2. Click **+ New in-app currency** (e.g. Code: `coins`, Name: `Coins`). (Bấm + New in-app currency, ví dụ Code: `coins`, Name: `Coins`.)
+3. Associate products with your currency: (Gắn sản phẩm vào loại tiền:)
+   - **One-time purchase**: Grant a fixed amount of coins upon purchase (e.g. 500 coins). (Mua gói nhận số lượng cố định, ví dụ 500 coins.)
+   - **Subscription**: Auto-grant recurring coins each renewal cycle. (Tự động cộng coins định kỳ mỗi chu kỳ gia hạn.)
+
+### UIKit (Combine)
+
+```swift
+import UIKit
+import Combine
+import TNSubscriptionIOS
+
+class CurrencyViewController: UIViewController {
+    private var cancellables = Set<AnyCancellable>()
+    let currencyManager = TNInAppCurrencyManager.shared
+    
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        
+        // Fetch latest balances from RevenueCat (Tải số dư mới nhất từ RevenueCat)
+        currencyManager.fetchCurrencies()
+        
+        // Realtime observe balances (Lắng nghe thay đổi số dư)
+        currencyManager.$balances
+            .receive(on: RunLoop.main)
+            .sink { [weak self] balances in
+                let coins = balances["coins"] ?? 0
+                self?.coinsLabel.text = "🪙 \(coins)"
+            }
+            .store(in: &cancellables)
+    }
+}
+```
+
+### SwiftUI
+
+```swift
+import SwiftUI
+import TNSubscriptionIOS
+
+struct CurrencyBalanceBarView: View {
+    @ObservedObject var currencies = TNInAppCurrencyManager.shared
+    
+    var body: some View {
+        HStack(spacing: 16) {
+            Label("\(currencies.balance(for: "coins"))", systemImage: "bitcoinsign.circle.fill")
+                .foregroundColor(.yellow)
+            
+            Label("\(currencies.balance(for: "gems"))", systemImage: "diamond.fill")
+                .foregroundColor(.cyan)
+            
+            if currencies.isLoading {
+                ProgressView()
+                    .scaleEffect(0.8)
+            }
+        }
+        .onAppear {
+            // Fetch balances on appear (Tải số dư khi view xuất hiện)
+            currencies.fetchCurrencies()
+        }
+    }
+}
+```
+
+### Spending & Deductions (Chi tiêu & Trừ tiền)
+
+RevenueCat safely maintains balances on the cloud. Deduct currencies using the following approaches: (RevenueCat quản lý số dư an toàn trên Cloud. Bạn có thể trừ tiền theo các cách:)
+
+#### Option 1: Purchase Item via Proxy — RevenueCat Security Best Practice (Mua item qua Proxy — Chuẩn bảo mật cao nhất ✅)
+> **Security Rule (Nguyên tắc bảo mật)**: The client only sends the `itemId` (or action). The backend determines the price and instructs RevenueCat to deduct. Never send price/amount from client to prevent packet tampering! (Client chỉ gửi `itemId`. Backend tự tra bảng giá và gọi RevenueCat trừ tiền. Tuyệt đối không để Client tự truyền giá tiền để chống hacker sửa giá gói tin!)
+
+Auto-attaches `X-Client-Id`, `X-Device-Id` (Rule 1) and `Idempotency-Key` (UUID): (Tự động đính kèm `X-Client-Id`, `X-Device-Id` theo Rule 1 và `Idempotency-Key` UUID:)
+
+```swift
+guard let proxyURL = URL(string: "https://your-api.com/api/proxy/purchase-item") else { return }
+
+TNInAppCurrencyManager.shared.purchaseItemViaProxy(
+    proxyEndpoint: proxyURL,
+    apiKey: "YOUR_APP_API_KEY",
+    itemId: "premium_filter_pack"  // ← Client only sends item ID (Chỉ gửi ID món đồ, Backend tự tra giá và trừ trên RevenueCat!)
+) { result in
+    switch result {
+    case .success(let updatedBalances):
+        print("Purchase successful! New balances: \(updatedBalances)") // (Mua thành công! Số dư mới: \(updatedBalances))
+    case .failure(let error):
+        print("Purchase error: \(error.localizedDescription)") // (Lỗi mua: \(error.localizedDescription))
+    }
+}
+```
+
+#### Option 2: Direct Amount Spend via Proxy (Trừ tiền theo số lượng qua Proxy)
+For backends or internal endpoints supporting direct amount deductions: (Dùng khi backend hỗ trợ endpoint trừ số lượng trực tiếp:)
+
+```swift
+guard let proxyURL = URL(string: "https://your-api.com/api/proxy/spend") else { return }
+
+TNInAppCurrencyManager.shared.spendViaProxy(
+    proxyEndpoint: proxyURL,
+    apiKey: "YOUR_APP_API_KEY",
+    code: "coins",
+    amount: 10
+) { result in
+    switch result {
+    case .success(let newBalance):
+        print("Deduction successful! New balance: \(newBalance)") // (Trừ thành công! Số dư mới: \(newBalance))
+    case .failure(let error):
+        print("Deduction error: \(error.localizedDescription)") // (Lỗi trừ tiền: \(error.localizedDescription))
+    }
+}
+```
+
+#### Option 3: Custom Spend Handlers (Cấu hình handler riêng cho backend)
+
+```swift
+// Item-based handler, recommended for security (Handler theo Item ID, khuyến nghị an toàn)
+TNInAppCurrencyManager.shared.configureActionSpendHandler { itemId, extraParams in
+    return try await MyBackendAPI.purchaseVirtualItem(itemId: itemId)
+}
+
+// Amount-based handler (Handler theo số lượng tiền)
+TNInAppCurrencyManager.shared.configureSpendHandler { code, amount, reference in
+    return try await MyBackendAPI.deductCurrency(code: code, amount: amount, ref: reference)
+}
+```
+
+#### Option 4: Optimistic Local Deduction (Trừ cục bộ tức thì)
+For instant UI response or offline tolerance: (Dùng cho giao diện cần phản hồi ngay lập tức hoặc chế độ offline:)
+
+```swift
+if TNInAppCurrencyManager.shared.deductLocalBalance(10, for: "coins") {
+    // Deducted 10 coins locally (Đã trừ 10 coins trên UI thành công)
+}
+```
+
+---
+
+## 7. TN Studio Proxy Headers
 
 Package auto-generates a persistent `clientId` (Keychain-backed). Use for `X-Client-Id` header when calling TN Studio proxy APIs. (Package tự tạo `clientId` persistent lưu Keychain. Dùng cho header `X-Client-Id` khi gọi TN Studio proxy API.)
 
@@ -683,6 +846,8 @@ request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
 | `currentPlanProductID → String?` | First active plan's product ID (Product ID của plan active đầu tiên) |
 | `currentProductID(for:) → String?` | Product ID for specific entitlement (Product ID cho entitlement cụ thể) |
 | `currentPlanDisplayName → String?` | Display name of current plan (Tên hiển thị plan hiện tại) |
+| `currencyManager → TNInAppCurrencyManager` | Access RevenueCat In-App Currency manager (Truy cập manager tiền ảo) |
+| `currencyBalance(for: String) → Int` | Fast balance query for currency code (Tra cứu nhanh số dư tiền ảo) |
 
 #### Static
 
@@ -692,6 +857,37 @@ request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
 | `TNSubscriptionIOS.displayName(forProductID:)` | Display name from product ID (Tên hiển thị từ product ID) |
 | `TNSubscriptionIOS.isRecommendedPackage(_:)` | Is recommended package, yearly (Có phải gói recommended, yearly) |
 | `TNSubscriptionIOS.packageSortOrder(_:)` | Sort order for package types (Thứ tự sắp xếp gói) |
+
+### `TNInAppCurrencyManager.shared` (or `TNVirtualCurrencyManager.shared`)
+
+#### Properties — `@Published`, realtime observable (Lắng nghe realtime)
+
+| Property | Type | Description (Mô tả) |
+|---|---|---|
+| `balances` | `[String: Int]` | Current balances keyed by currency code (Số dư theo mã tiền tệ, e.g. `["coins": 500]`) |
+| `currencies` | `[String: VirtualCurrency]` | RevenueCat `VirtualCurrency` objects with name, code, serverDescription (Danh sách đối tượng chi tiết từ RevenueCat) |
+| `rawCurrencies` | `VirtualCurrencies?` | Underlying RevenueCat `VirtualCurrencies` container (Đối tượng gốc từ RevenueCat) |
+| `isLoading` | `Bool` | Whether balances are currently fetching (Đang tải số dư) |
+| `error` | `String?` | Error message if load or spend fails (Lỗi khi load hoặc trừ tiền) |
+| `lastUpdated` | `Date?` | Last successful sync timestamp (Thời gian đồng bộ gần nhất) |
+
+#### Methods (Phương thức)
+
+| Method | Description (Mô tả) |
+|---|---|
+| `fetchCurrencies(forceRefresh:completion:)` | Fetch balances from RevenueCat with completion handler (Tải số dư từ RevenueCat) |
+| `fetchCurrenciesAsync(forceRefresh:) async throws` | Async/await fetch balances (Tải số dư dùng async/await) |
+| `balance(for: String) → Int` | Get balance for currency code (Lấy số dư theo mã tiền) |
+| `currency(for: String) → VirtualCurrency?` | Get `VirtualCurrency` object (Lấy chi tiết đối tượng tiền tệ) |
+| `canAfford(_:currency:) → Bool` | Check if user has sufficient balance (Kiểm tra đủ số dư) |
+| `invalidateCache()` | Invalidate local virtual currencies cache (Xóa cache để buộc fetch mới từ server) |
+| `spend(code:amount:reference:completion:)` | Spend currency via custom spend handler (Trừ tiền qua spend handler) |
+| `spendViaProxy(proxyEndpoint:apiKey:code:amount:userId:completion:)` | Spend currency via TN Studio Proxy Gateway with identity headers (Trừ tiền qua TN Studio proxy) |
+| `purchaseItem(itemId:extraParams:completion:)` | Secure item purchase via action handler (Mua item an toàn qua handler) |
+| `purchaseItemViaProxy(proxyEndpoint:apiKey:itemId:extraParams:userId:completion:)` | Secure item purchase via TN Studio Proxy Gateway (Mua item an toàn qua proxy, client chỉ gửi `itemId`) |
+| `deductLocalBalance(_:for:) → Bool` | Optimistic local balance deduction for instant UI response (Trừ cục bộ tức thì) |
+| `configureSpendHandler(_:)` | Register custom amount spend handler (Đăng ký hàm trừ tiền theo số lượng trên server) |
+| `configureActionSpendHandler(_:)` | Register custom item-based spend handler (Đăng ký hàm mua item bảo mật trên server) |
 
 ### `TNConsumableManager.shared`
 
