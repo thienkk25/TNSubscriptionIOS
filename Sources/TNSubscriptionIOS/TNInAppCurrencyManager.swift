@@ -262,11 +262,11 @@ public final class TNInAppCurrencyManager: ObservableObject {
         return true
     }
     
-    /// Helper to spend currency through TN Studio API Proxy Gateway.
+    /// Helper to spend currency through your backend API or proxy gateway.
     /// Automatically attaches client identity headers (`X-Client-Id`, `X-Device-Id`, etc.).
     ///
     /// - Parameters:
-    ///   - proxyEndpoint: URL of the spend endpoint on your server or TN Studio proxy.
+    ///   - proxyEndpoint: URL of the spend endpoint on your server or API proxy.
     ///   - apiKey: Your app API key.
     ///   - code: Currency code to spend.
     ///   - amount: Amount to spend.
@@ -303,7 +303,7 @@ public final class TNInAppCurrencyManager: ObservableObject {
         // Idempotency-Key for exactly-once execution (RevenueCat Best Practice)
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
         
-        // TN Studio Identity Headers (Rule 1 compliance)
+        // Standard Client Identity Headers (X-Client-Id, X-Device-Id, X-User-Id)
         request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
         if let vendorId = UIDevice.current.identifierForVendor?.uuidString {
             request.setValue(vendorId, forHTTPHeaderField: "X-Device-Id")
@@ -395,12 +395,12 @@ public final class TNInAppCurrencyManager: ObservableObject {
         }
     }
     
-    /// Securely purchases an in-app virtual item via TN Studio API Proxy Gateway.
+    /// Securely purchases an in-app virtual item via your backend API or proxy gateway.
     /// Following RevenueCat security guidelines: the client ONLY sends `itemId` (or action),
     /// and the backend determines the price and executes the deduction.
     ///
     /// - Parameters:
-    ///   - proxyEndpoint: URL of the spend/purchase endpoint on your server or TN Studio proxy.
+    ///   - proxyEndpoint: URL of the spend/purchase endpoint on your server or API proxy.
     ///   - apiKey: Your app API key.
     ///   - itemId: Unique ID of the virtual item to purchase (e.g. "sung_vip", "hint").
     ///   - extraParams: Optional extra parameters to send in JSON body.
@@ -422,7 +422,7 @@ public final class TNInAppCurrencyManager: ObservableObject {
         // Idempotency-Key for exactly-once execution (RevenueCat Best Practice)
         request.setValue(UUID().uuidString, forHTTPHeaderField: "Idempotency-Key")
         
-        // TN Studio Identity Headers (Rule 1 compliance)
+        // Standard Client Identity Headers (X-Client-Id, X-Device-Id, X-User-Id)
         request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
         if let vendorId = UIDevice.current.identifierForVendor?.uuidString {
             request.setValue(vendorId, forHTTPHeaderField: "X-Device-Id")

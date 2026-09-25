@@ -640,7 +640,7 @@ struct GameView: View {
 - **Capacity & Limits (Giới hạn số lượng)**: Up to 100 currencies per project; balance between 0 and 2,000,000,000 (2 billion); negative balances not supported. (Tối đa 100 loại tiền tệ / project; số dư tối đa 2 tỷ; không hỗ trợ số dư âm.)
 - **Non-transferable on Restore (Không chuyển giao khi Restore)**: Unlike subscriptions, virtual currencies cannot be transferred across accounts during restore. (Khác với subscription, tiền ảo không thể chuyển qua tài khoản khác khi restore.)
 - **Auto-Expiration Priority (Thứ tự ưu tiên hết hạn)**: Expiring currencies are automatically consumed first by RevenueCat. (RevenueCat tự động ưu tiên trừ tiền sắp hết hạn trước.)
-- **Server-Side Security (Bảo mật chi tiêu phía server)**: Currency deductions require Developer API with Secret Key — must be initiated via Backend or TN Studio Proxy Gateway, never from client directly. (Trừ tiền yêu cầu Secret Key qua Backend hoặc TN Studio Proxy Gateway, không nhúng key trên app client.)
+- **Server-Side Security (Bảo mật chi tiêu phía server)**: Currency deductions require Developer API with Secret Key — must be initiated via Backend or API Proxy Gateway, never from client directly. (Trừ tiền yêu cầu Secret Key qua Backend hoặc API Proxy Gateway, không nhúng key trên app client.)
 - **Idempotency (Chống trùng giao dịch)**: Pass `Idempotency-Key` (UUID) to guarantee exactly-once execution during retries. (Header `Idempotency-Key` đảm bảo chỉ trừ tiền tối đa 1 lần khi mạng bị timeout/retry.)
 
 ### Consumables vs In-App Currencies: When to use which? (Khi nào dùng cái nào?)
@@ -727,7 +727,7 @@ RevenueCat safely maintains balances on the cloud. Deduct currencies using the f
 #### Option 1: Purchase Item via Proxy — RevenueCat Security Best Practice (Mua item qua Proxy — Chuẩn bảo mật cao nhất ✅)
 > **Security Rule (Nguyên tắc bảo mật)**: The client only sends the `itemId` (or action). The backend determines the price and instructs RevenueCat to deduct. Never send price/amount from client to prevent packet tampering! (Client chỉ gửi `itemId`. Backend tự tra bảng giá và gọi RevenueCat trừ tiền. Tuyệt đối không để Client tự truyền giá tiền để chống hacker sửa giá gói tin!)
 
-Auto-attaches `X-Client-Id`, `X-Device-Id` (Rule 1) and `Idempotency-Key` (UUID): (Tự động đính kèm `X-Client-Id`, `X-Device-Id` theo Rule 1 và `Idempotency-Key` UUID:)
+Auto-attaches client identity headers (`X-Client-Id`, `X-Device-Id`) and `Idempotency-Key` (UUID): (Tự động đính kèm headers định danh client (`X-Client-Id`, `X-Device-Id`) và `Idempotency-Key` UUID:)
 
 ```swift
 guard let proxyURL = URL(string: "https://your-api.com/api/proxy/purchase-item") else { return }
@@ -792,12 +792,33 @@ if TNInAppCurrencyManager.shared.deductLocalBalance(10, for: "coins") {
 
 ---
 
-## 7. TN Studio Proxy Headers
+## 7. Persistent Client Identity for Backend APIs (Định danh Client bền vững cho Backend API)
 
-Package auto-generates a persistent `clientId` (Keychain-backed). Use for `X-Client-Id` header when calling TN Studio proxy APIs. (Package tự tạo `clientId` persistent lưu Keychain. Dùng cho header `X-Client-Id` khi gọi TN Studio proxy API.)
+The package automatically generates and securely persists a unique `clientId` in the iOS Keychain (which survives app reinstalls). Attach this identifier along with device hardware headers when calling your backend APIs or proxy gateways for client identification, rate-limiting, and anti-fraud. (Package tự động sinh một `clientId` duy nhất, lưu trữ an toàn trong iOS Keychain và tồn tại qua các lần cài đặt lại app. Sử dụng giá trị này cùng headers thiết bị khi gọi API Backend hoặc proxy gateway để định danh client, giới hạn tần suất request và chống gian lận.)
+
+### Standard Identity Headers (Bảng headers định danh tiêu chuẩn)
+
+| Header | Value (Giá trị) | Purpose (Mục đích) |
+|---|---|---|
+| `X-Client-Id` | `TNSubscriptionIOS.clientId` | Unique install UUID across sessions & reinstalls (UUID duy nhất theo lượt cài đặt, bền vững qua các phiên và cài lại app) |
+| `X-Device-Id` | `UIDevice.current.identifierForVendor?.uuidString` | Apple hardware vendor device identifier (Định danh thiết bị phần cứng từ Apple) |
+| `X-User-Id` | User / Account ID (Optional) (Tùy chọn) | Authenticated user account identifier (ID tài khoản người dùng sau khi đăng nhập) |
+
+### Usage Example (Ví dụ sử dụng)
 
 ```swift
+var request = URLRequest(url: backendURL)
+request.httpMethod = "POST"
+request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+// Attach client identification headers (Đính kèm headers định danh client)
 request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
+if let deviceId = UIDevice.current.identifierForVendor?.uuidString {
+    request.setValue(deviceId, forHTTPHeaderField: "X-Device-Id")
+}
+if let userId = currentUserId {
+    request.setValue(userId, forHTTPHeaderField: "X-User-Id")
+}
 ```
 
 ---
@@ -882,9 +903,9 @@ request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
 | `canAfford(_:currency:) → Bool` | Check if user has sufficient balance (Kiểm tra đủ số dư) |
 | `invalidateCache()` | Invalidate local virtual currencies cache (Xóa cache để buộc fetch mới từ server) |
 | `spend(code:amount:reference:completion:)` | Spend currency via custom spend handler (Trừ tiền qua spend handler) |
-| `spendViaProxy(proxyEndpoint:apiKey:code:amount:userId:completion:)` | Spend currency via TN Studio Proxy Gateway with identity headers (Trừ tiền qua TN Studio proxy) |
+| `spendViaProxy(proxyEndpoint:apiKey:code:amount:userId:completion:)` | Spend currency via API Proxy Gateway with identity headers (Trừ tiền qua API proxy kèm headers định danh) |
 | `purchaseItem(itemId:extraParams:completion:)` | Secure item purchase via action handler (Mua item an toàn qua handler) |
-| `purchaseItemViaProxy(proxyEndpoint:apiKey:itemId:extraParams:userId:completion:)` | Secure item purchase via TN Studio Proxy Gateway (Mua item an toàn qua proxy, client chỉ gửi `itemId`) |
+| `purchaseItemViaProxy(proxyEndpoint:apiKey:itemId:extraParams:userId:completion:)` | Secure item purchase via API Proxy Gateway (Mua item an toàn qua API proxy, client chỉ gửi `itemId`) |
 | `deductLocalBalance(_:for:) → Bool` | Optimistic local balance deduction for instant UI response (Trừ cục bộ tức thì) |
 | `configureSpendHandler(_:)` | Register custom amount spend handler (Đăng ký hàm trừ tiền theo số lượng trên server) |
 | `configureActionSpendHandler(_:)` | Register custom item-based spend handler (Đăng ký hàm mua item bảo mật trên server) |

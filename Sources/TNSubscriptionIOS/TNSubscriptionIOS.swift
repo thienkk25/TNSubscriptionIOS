@@ -255,16 +255,16 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         TNInAppCurrencyManager.shared.balance(for: code)
     }
     
-    // MARK: - Shared Client ID (TN Studio Proxy & RevenueCat)
+    // MARK: - Persistent Client ID (Backend API & RevenueCat)
     
     private static let clientIdKeychainAccount = "client_id"
     private static let clientIdUserDefaultsKey = "persistent_client_id"
     
-    /// A persistent client ID shared between RevenueCat and TN Studio proxy.
-    /// Survives app reinstalls via Keychain. Falls back to UserDefaults.
+    /// A persistent, unique client ID stored in Keychain (survives app reinstalls).
     ///
-    /// Use this value for the `X-Client-Id` HTTP header in your API calls:
-    /// ```
+    /// Use this value for the `X-Client-Id` HTTP header when calling your backend APIs or proxy gateways
+    /// for rate-limiting, spam prevention, and client session identification:
+    /// ```swift
     /// request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
     /// ```
     public static var clientId: String {
