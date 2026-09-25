@@ -167,6 +167,9 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         // Create shared instance
         let instance = TNSubscriptionIOS(config: config)
         shared = instance
+        
+        // Initialize and fetch RevenueCat in-app currencies
+        TNInAppCurrencyManager.shared.fetchCurrencies()
     }
     
     private init(config: TNSubscriptionConfig) {
@@ -238,6 +241,18 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     /// Returns the product IDs configured for a specific entitlement.
     public func productIDs(for entitlementId: String) -> Set<String> {
         config.entitlements.first(where: { $0.id == entitlementId })?.productIDs ?? []
+    }
+    
+    // MARK: - In-App Currencies (RevenueCat)
+    
+    /// Access the RevenueCat In-App Currency manager.
+    public var currencyManager: TNInAppCurrencyManager {
+        TNInAppCurrencyManager.shared
+    }
+    
+    /// Returns the current balance for a virtual currency code (e.g. "coins").
+    public func currencyBalance(for code: String) -> Int {
+        TNInAppCurrencyManager.shared.balance(for: code)
     }
     
     // MARK: - Shared Client ID (TN Studio Proxy & RevenueCat)
@@ -515,6 +530,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
                 if result.userCancelled {
                     completion(.failure(PurchaseFlowError.userCancelled))
                 } else {
+                    TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
                     completion(.success(result.customerInfo))
                 }
             } catch {
@@ -575,6 +591,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         if !storeKitActive.isEmpty {
             updateState(isPremium: true, state: .unlocked, activeEntitlements: storeKitActive)
             Self.syncClientIdToRevenueCat()
+            TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
             Task { try? await Purchases.shared.restorePurchases() }
             return true
         }
@@ -584,7 +601,10 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
             let active = resolveActiveEntitlements(from: info)
             let isSuccess = !active.isEmpty
             updateState(isPremium: isSuccess, state: isSuccess ? .unlocked : .locked, activeEntitlements: active, info: info)
-            if isSuccess { Self.syncClientIdToRevenueCat() }
+            if isSuccess {
+                Self.syncClientIdToRevenueCat()
+                TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
+            }
             return isSuccess
         } catch {
             updateState(isPremium: previousPremium, state: previousState, activeEntitlements: previousActive)
@@ -643,6 +663,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
 
 extension TNSubscriptionIOS: PurchasesDelegate {
     nonisolated public func purchases(_ purchases: Purchases, receivedUpdated customerInfo: CustomerInfo) {
+        TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
         Task { @MainActor in
             self.customerInfo = customerInfo
             if !self.config.isIAPEnabled {
