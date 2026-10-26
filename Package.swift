@@ -21,7 +21,14 @@ let package = Package(
             name: "TNSubscriptionIOS",
             dependencies: [
                 .product(name: "RevenueCat", package: "purchases-ios-spm"),
+            ],
+            resources: [
+                .process("PrivacyInfo.xcprivacy")
             ]
+        ),
+        .testTarget(
+            name: "TNSubscriptionIOSTests",
+            dependencies: ["TNSubscriptionIOS"]
         ),
     ]
 )

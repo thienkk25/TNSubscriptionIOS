@@ -1,0 +1,82 @@
+name: CI Tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Build & Test (iOS Simulator)
+    runs-on: macos-15
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode & Swift version
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Cache Swift Package Manager
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+            DerivedData/SourcePackages
+          key: ${{ runner.os }}-spm-${{ hashFiles('Package.resolved', 'Package.swift') }}
+          restore-keys: |
+            ${{ runner.os }}-spm-
+
+      - name: Resolve Package Dependencies
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -scheme TNSubscriptionIOS \
+            -derivedDataPath DerivedData
+
+      - name: Select Available iPhone Simulator
+        id: simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | jq -r '
+            .devices
+            | to_entries[]
+            | select(.key | contains("iOS"))
+            | .value[]
+            | select(.name | startswith("iPhone"))
+            | .udid
+          ' | head -n 1)
+
+          if [ -z "$UDID" ]; then
+            echo "No iPhone simulator found, falling back to generic iOS Simulator"
+            echo "destination=generic/platform=iOS Simulator" >> "$GITHUB_OUTPUT"
+            echo "has_device=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "Selected Simulator UDID: $UDID"
+            xcrun simctl boot "$UDID" || true
+            echo "destination=platform=iOS Simulator,id=$UDID" >> "$GITHUB_OUTPUT"
+            echo "has_device=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and Run Unit Tests
+        run: |
+          if [ "${{ steps.simulator.outputs.has_device }}" = "true" ]; then
+            xcodebuild test \
+              -scheme TNSubscriptionIOS \
+              -derivedDataPath DerivedData \
+              -destination "${{ steps.simulator.outputs.destination }}" \
+              -enableCodeCoverage YES \
+              CODE_SIGNING_ALLOWED=NO
+          else
+            xcodebuild build-for-testing \
+              -scheme TNSubscriptionIOS \
+              -derivedDataPath DerivedData \
+              -destination "${{ steps.simulator.outputs.destination }}" \
+              CODE_SIGNING_ALLOWED=NO
+          fi

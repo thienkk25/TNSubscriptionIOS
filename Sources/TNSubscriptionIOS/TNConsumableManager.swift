@@ -113,12 +113,21 @@ public final class TNConsumableManager: ObservableObject {
     private init(products: [TNConsumableProduct]) {
         self.products = products
         
-        // Load saved balances from UserDefaults
-        // (Load số dư đã lưu từ UserDefaults)
+        // Load saved balances from Keychain (with fallback/migration from UserDefaults)
+        // (Load số dư đã lưu từ Keychain, fallback/migrate từ UserDefaults)
         let currencies = Set(products.map(\.currency))
         for currency in currencies {
-            let saved = UserDefaults.standard.integer(forKey: Self.balanceKeyPrefix + currency)
-            balances[currency] = saved
+            let key = Self.balanceKeyPrefix + currency
+            if let keychainStr = TNSubscriptionIOS.loadFromKeychain(account: key), let keychainVal = Int(keychainStr) {
+                balances[currency] = max(0, keychainVal)
+            } else {
+                let saved = UserDefaults.standard.integer(forKey: key)
+                let clamped = max(0, saved)
+                balances[currency] = clamped
+                if clamped > 0 {
+                    TNSubscriptionIOS.saveToKeychain(account: key, value: "\(clamped)")
+                }
+            }
         }
         
         // 1. Recover unfinished transactions from previous sessions
@@ -144,9 +153,41 @@ public final class TNConsumableManager: ObservableObject {
     
     // MARK: - Transaction Recovery
     
-    /// Key prefix for tracking which transactions have been credited.
+    /// Legacy key prefix for tracking which transactions have been credited.
     /// (Prefix key để theo dõi giao dịch nào đã được cộng tiền.)
     private static let processedTxKeyPrefix = "tn_consumable_tx_"
+    
+    /// Bounded ring-buffer key for tracking recent processed transaction IDs.
+    private static let processedTxListKey = "tn_consumable_processed_tx_ids"
+    private static let maxProcessedTxHistory = 200
+    
+    private func isTransactionProcessed(_ transactionId: UInt64) -> Bool {
+        let txString = "\(transactionId)"
+        let list = UserDefaults.standard.stringArray(forKey: Self.processedTxListKey) ?? []
+        if list.contains(txString) {
+            return true
+        }
+        // Check legacy per-transaction key and migrate if found
+        let legacyKey = Self.processedTxKeyPrefix + txString
+        if UserDefaults.standard.bool(forKey: legacyKey) {
+            UserDefaults.standard.removeObject(forKey: legacyKey)
+            markTransactionProcessed(transactionId)
+            return true
+        }
+        return false
+    }
+    
+    private func markTransactionProcessed(_ transactionId: UInt64) {
+        let txString = "\(transactionId)"
+        var list = UserDefaults.standard.stringArray(forKey: Self.processedTxListKey) ?? []
+        if !list.contains(txString) {
+            list.append(txString)
+            if list.count > Self.maxProcessedTxHistory {
+                list.removeFirst(list.count - Self.maxProcessedTxHistory)
+            }
+            UserDefaults.standard.set(list, forKey: Self.processedTxListKey)
+        }
+    }
     
     /// Recovers any unfinished consumable transactions from previous sessions.
     /// Handles: network drops, app crash during purchase, pending approvals completing.
@@ -174,8 +215,7 @@ public final class TNConsumableManager: ObservableObject {
         
         // Dedup: skip if this transaction was already credited
         // (Chống trùng: bỏ qua nếu giao dịch này đã được cộng tiền rồi)
-        let txKey = Self.processedTxKeyPrefix + "\(transaction.id)"
-        if UserDefaults.standard.bool(forKey: txKey) {
+        if isTransactionProcessed(transaction.id) {
             // Already processed, just finish
             // (Đã xử lý rồi, chỉ finish)
             await transaction.finish()
@@ -188,7 +228,7 @@ public final class TNConsumableManager: ObservableObject {
         }
         
         // Mark as processed (Đánh dấu đã xử lý)
-        UserDefaults.standard.set(true, forKey: txKey)
+        markTransactionProcessed(transaction.id)
         
         // Finish transaction (Kết thúc giao dịch)
         await transaction.finish()
@@ -208,8 +248,9 @@ public final class TNConsumableManager: ObservableObject {
         }
     }
     
+    /// Loads StoreKit products from App Store asynchronously.
     @MainActor
-    private func loadProductsAsync() async {
+    public func loadProductsAsync() async {
         isLoadingProducts = true
         loadError = nil
         defer { isLoadingProducts = false }
@@ -231,7 +272,50 @@ public final class TNConsumableManager: ObservableObject {
     
     // MARK: - Purchase
     
-    /// Purchases a consumable product by product ID.
+    /// Purchases a consumable product by product ID using Swift Concurrency (`async/await`).
+    @MainActor
+    @discardableResult
+    public func purchaseAsync(productId: String) async throws -> Int {
+        guard let config = products.first(where: { $0.id == productId }) else {
+            throw ConsumableError.productNotConfigured(productId)
+        }
+        
+        guard let storeProduct = storeProducts.first(where: { $0.id == productId }) else {
+            throw ConsumableError.productNotLoaded(productId)
+        }
+        
+        isPurchasing = true
+        defer { isPurchasing = false }
+        
+        let result = try await storeProduct.purchase()
+        
+        switch result {
+        case .success(let verification):
+            guard case .verified(let transaction) = verification else {
+                throw ConsumableError.verificationFailed
+            }
+            await processTransaction(transaction)
+            return config.reward
+            
+        case .userCancelled:
+            throw ConsumableError.userCancelled
+            
+        case .pending:
+            throw ConsumableError.purchasePending
+            
+        @unknown default:
+            throw ConsumableError.unknown
+        }
+    }
+    
+    /// Purchases a consumable product by `Product` (StoreKit) using Swift Concurrency (`async/await`).
+    @MainActor
+    @discardableResult
+    public func purchaseAsync(product: Product) async throws -> Int {
+        try await purchaseAsync(productId: product.id)
+    }
+    
+    /// Purchases a consumable product by product ID (completion callback is guaranteed to execute on `@MainActor`).
     /// (Mua sản phẩm consumable theo product ID.)
     ///
     /// ```swift
@@ -245,49 +329,10 @@ public final class TNConsumableManager: ObservableObject {
     /// }
     /// ```
     public func purchase(productId: String, completion: @escaping (Result<Int, Error>) -> Void) {
-        guard let config = products.first(where: { $0.id == productId }) else {
-            completion(.failure(ConsumableError.productNotConfigured(productId)))
-            return
-        }
-        
-        guard let storeProduct = storeProducts.first(where: { $0.id == productId }) else {
-            completion(.failure(ConsumableError.productNotLoaded(productId)))
-            return
-        }
-        
-        Task {
-            await MainActor.run { isPurchasing = true }
-            defer { Task { @MainActor in self.isPurchasing = false } }
-            
+        Task { @MainActor in
             do {
-                let result = try await storeProduct.purchase()
-                
-                switch result {
-                case .success(let verification):
-                    guard case .verified(let transaction) = verification else {
-                        completion(.failure(ConsumableError.verificationFailed))
-                        return
-                    }
-                    
-                    // Credit balance + mark as processed + finish transaction
-                    // (Cộng số dư + đánh dấu đã xử lý + kết thúc giao dịch)
-                    // Uses processTransaction for dedup safety — if app crashes here,
-                    // recoverUnfinishedTransactions() will handle it on next launch.
-                    // (Dùng processTransaction để chống trùng — nếu app crash ở đây,
-                    //  recoverUnfinishedTransactions() sẽ xử lý khi mở lại.)
-                    await processTransaction(transaction)
-                    
-                    completion(.success(config.reward))
-                    
-                case .userCancelled:
-                    completion(.failure(ConsumableError.userCancelled))
-                    
-                case .pending:
-                    completion(.failure(ConsumableError.purchasePending))
-                    
-                @unknown default:
-                    completion(.failure(ConsumableError.unknown))
-                }
+                let reward = try await purchaseAsync(productId: productId)
+                completion(.success(reward))
             } catch {
                 completion(.failure(error))
             }
@@ -312,26 +357,28 @@ public final class TNConsumableManager: ObservableObject {
         balances[currency] ?? 0
     }
     
-    /// Adds amount to a currency balance. Automatically persists to UserDefaults.
-    /// (Cộng số lượng vào số dư. Tự động lưu vào UserDefaults.)
+    /// Adds a positive amount to a currency balance. Automatically persists to Keychain and UserDefaults.
+    /// (Cộng số lượng dương vào số dư. Tự động lưu vào Keychain và UserDefaults.)
     ///
     /// ```swift
     /// TNConsumableManager.shared.addBalance(100, for: "coins")
     /// ```
     @MainActor
     public func addBalance(_ amount: Int, for currency: String) {
+        guard amount > 0 else { return }
         let current = balances[currency] ?? 0
-        let newBalance = current + amount
-        balances[currency] = newBalance
-        persistBalance(newBalance, for: currency)
+        let (newBalance, overflow) = current.addingReportingOverflow(amount)
+        let safeBalance = overflow ? Int.max : newBalance
+        balances[currency] = safeBalance
+        persistBalance(safeBalance, for: currency)
         
         #if DEBUG
-        print("[TNConsumable] +\(amount) \(currency) → balance: \(newBalance)")
+        print("[TNConsumable] +\(amount) \(currency) → balance: \(safeBalance)")
         #endif
     }
     
-    /// Deducts amount from a currency balance. Returns `false` if insufficient balance.
-    /// (Trừ số lượng từ số dư. Trả về `false` nếu không đủ số dư.)
+    /// Deducts a positive amount from a currency balance. Returns `false` if amount <= 0 or insufficient balance.
+    /// (Trừ số lượng dương từ số dư. Trả về `false` nếu amount <= 0 hoặc không đủ số dư.)
     ///
     /// ```swift
     /// let success = TNConsumableManager.shared.deductBalance(10, for: "coins")
@@ -342,6 +389,7 @@ public final class TNConsumableManager: ObservableObject {
     @discardableResult
     @MainActor
     public func deductBalance(_ amount: Int, for currency: String) -> Bool {
+        guard amount > 0 else { return false }
         let current = balances[currency] ?? 0
         guard current >= amount else { return false }
         
@@ -356,12 +404,13 @@ public final class TNConsumableManager: ObservableObject {
         return true
     }
     
-    /// Sets the balance for a currency to a specific value. Use for server sync.
-    /// (Đặt số dư cho loại tiền thành giá trị cụ thể. Dùng khi sync với server.)
+    /// Sets the balance for a currency to a specific non-negative value. Use for server sync.
+    /// (Đặt số dư cho loại tiền thành giá trị cụ thể không âm. Dùng khi sync với server.)
     @MainActor
     public func setBalance(_ amount: Int, for currency: String) {
-        balances[currency] = amount
-        persistBalance(amount, for: currency)
+        let clamped = max(0, amount)
+        balances[currency] = clamped
+        persistBalance(clamped, for: currency)
     }
     
     /// Checks if user has enough balance for a specific amount.
@@ -373,7 +422,8 @@ public final class TNConsumableManager: ObservableObject {
     /// }
     /// ```
     public func canAfford(_ amount: Int, currency: String) -> Bool {
-        balance(for: currency) >= amount
+        guard amount >= 0 else { return false }
+        return balance(for: currency) >= amount
     }
     
     // MARK: - Helpers
@@ -399,7 +449,9 @@ public final class TNConsumableManager: ObservableObject {
     // MARK: - Persistence
     
     private func persistBalance(_ amount: Int, for currency: String) {
-        UserDefaults.standard.set(amount, forKey: Self.balanceKeyPrefix + currency)
+        let key = Self.balanceKeyPrefix + currency
+        UserDefaults.standard.set(amount, forKey: key)
+        TNSubscriptionIOS.saveToKeychain(account: key, value: "\(amount)")
     }
     
     // MARK: - Errors

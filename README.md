@@ -289,6 +289,8 @@ enum PaywallConfigs {
             .init(icon: "star.fill",    title: "<Feature 1>", subtitle: "<Description 1>"),
             .init(icon: "bolt.fill",    title: "<Feature 2>", subtitle: "<Description 2>")
         ],
+        offeringIdentifier: "sale",               // ← Optional: specific RevenueCat Offering ID (Tùy chọn: ID Offering trên RevenueCat)
+        entitlementId: "Sale",                    // ← Optional: specific Entitlement ID (Tùy chọn: ID Entitlement mục tiêu)
         privacyURL: URL(string: "https://<yoursite.com>/privacy"),
         termsURL: URL(string: "https://<yoursite.com>/terms"),
         accentColor: .orange,
@@ -722,86 +724,74 @@ struct CurrencyBalanceBarView: View {
 
 ### Spending & Deductions (Chi tiêu & Trừ tiền)
 
-RevenueCat safely maintains balances on the cloud. Deduct currencies using the following approaches: (RevenueCat quản lý số dư an toàn trên Cloud. Bạn có thể trừ tiền theo các cách:)
+Works **with or without a backend**: (Hoạt động **cả khi không có backend** hoặc **có backend**:)
 
-#### Option 1: Purchase Item via Proxy — RevenueCat Security Best Practice (Mua item qua Proxy — Chuẩn bảo mật cao nhất ✅)
-> **Security Rule (Nguyên tắc bảo mật)**: The client only sends the `itemId` (or action). The backend determines the price and instructs RevenueCat to deduct. Never send price/amount from client to prevent packet tampering! (Client chỉ gửi `itemId`. Backend tự tra bảng giá và gọi RevenueCat trừ tiền. Tuyệt đối không để Client tự truyền giá tiền để chống hacker sửa giá gói tin!)
-
-Auto-attaches client identity headers (`X-Client-Id`, `X-Device-Id`) and `Idempotency-Key` (UUID): (Tự động đính kèm headers định danh client (`X-Client-Id`, `X-Device-Id`) và `Idempotency-Key` UUID:)
+#### Mode A: No-Backend / Serverless Mode — Keychain Persistent (Chế độ Không Backend — Mặc định ✅)
+> If your app does **not** have a backend server, deductions and local rewards are automatically persisted in the **iOS Keychain** (`effectiveBalance = revenueCatCloudBalance + localKeychainOffset`). They survive `fetchCurrencies()` refreshes, app restarts, and app reinstalls!
+> (Nếu dự án **không có backend**, số tiền trừ hoặc thưởng thêm được tự động lưu bền vững trong **Keychain**, kết hợp tự động với số dư cộng từ RevenueCat Cloud — không bị mất khi gọi `fetchCurrencies()`, tắt mở lại app hay cài đặt lại app!)
 
 ```swift
+// 1. Deduct coins directly — persisted in Keychain (Trừ coins trực tiếp — lưu bền vững trong Keychain)
+if TNInAppCurrencyManager.shared.deductLocalBalance(10, for: "coins") {
+    // Unlocked feature! (Đã trừ 10 coins thành công)
+}
+
+// Or use spend(...) without configuring any backend handler (Hoặc dùng spend(...) mà không cần cấu hình backend)
+TNInAppCurrencyManager.shared.spend(code: "coins", amount: 10) { result in
+    if case .success(let newBalance) = result {
+        print("Remaining coins: \(newBalance)")
+    }
+}
+
+// 2. Grant local bonus coins, e.g. daily check-in or rewarded ads (Thưởng thêm coins cục bộ: điểm danh, xem quảng cáo...)
+TNInAppCurrencyManager.shared.addLocalBalance(50, for: "coins")
+```
+
+#### Mode B: With Backend / API Proxy Gateway (Optional — Tùy chọn cho dự án có Backend)
+
+If your project has a backend or uses TN Studio API Proxy Gateway: (Nếu dự án có server riêng hoặc dùng API Proxy:)
+
+```swift
+// Option B1: Purchase Item via Proxy — Client only sends itemId (Mua item qua Proxy)
 guard let proxyURL = URL(string: "https://your-api.com/api/proxy/purchase-item") else { return }
 
 TNInAppCurrencyManager.shared.purchaseItemViaProxy(
     proxyEndpoint: proxyURL,
     apiKey: "YOUR_APP_API_KEY",
-    itemId: "premium_filter_pack"  // ← Client only sends item ID (Chỉ gửi ID món đồ, Backend tự tra giá và trừ trên RevenueCat!)
-) { result in
-    switch result {
-    case .success(let updatedBalances):
-        print("Purchase successful! New balances: \(updatedBalances)") // (Mua thành công! Số dư mới: \(updatedBalances))
-    case .failure(let error):
-        print("Purchase error: \(error.localizedDescription)") // (Lỗi mua: \(error.localizedDescription))
-    }
-}
-```
+    itemId: "premium_filter_pack"
+) { result in ... }
 
-#### Option 2: Direct Amount Spend via Proxy (Trừ tiền theo số lượng qua Proxy)
-For backends or internal endpoints supporting direct amount deductions: (Dùng khi backend hỗ trợ endpoint trừ số lượng trực tiếp:)
-
-```swift
-guard let proxyURL = URL(string: "https://your-api.com/api/proxy/spend") else { return }
+// Option B2: Direct Amount Spend via Proxy (Trừ theo số lượng qua Proxy)
+guard let spendURL = URL(string: "https://your-api.com/api/proxy/spend") else { return }
 
 TNInAppCurrencyManager.shared.spendViaProxy(
-    proxyEndpoint: proxyURL,
+    proxyEndpoint: spendURL,
     apiKey: "YOUR_APP_API_KEY",
     code: "coins",
     amount: 10
-) { result in
-    switch result {
-    case .success(let newBalance):
-        print("Deduction successful! New balance: \(newBalance)") // (Trừ thành công! Số dư mới: \(newBalance))
-    case .failure(let error):
-        print("Deduction error: \(error.localizedDescription)") // (Lỗi trừ tiền: \(error.localizedDescription))
-    }
-}
-```
+) { result in ... }
 
-#### Option 3: Custom Spend Handlers (Cấu hình handler riêng cho backend)
-
-```swift
-// Item-based handler, recommended for security (Handler theo Item ID, khuyến nghị an toàn)
-TNInAppCurrencyManager.shared.configureActionSpendHandler { itemId, extraParams in
-    return try await MyBackendAPI.purchaseVirtualItem(itemId: itemId)
-}
-
-// Amount-based handler (Handler theo số lượng tiền)
+// Option B3: Custom Backend Spend Handler (Tự gắn hàm gọi API riêng)
 TNInAppCurrencyManager.shared.configureSpendHandler { code, amount, reference in
     return try await MyBackendAPI.deductCurrency(code: code, amount: amount, ref: reference)
 }
 ```
 
-#### Option 4: Optimistic Local Deduction (Trừ cục bộ tức thì)
-For instant UI response or offline tolerance: (Dùng cho giao diện cần phản hồi ngay lập tức hoặc chế độ offline:)
-
-```swift
-if TNInAppCurrencyManager.shared.deductLocalBalance(10, for: "coins") {
-    // Deducted 10 coins locally (Đã trừ 10 coins trên UI thành công)
-}
-```
-
 ---
 
-## 7. Persistent Client Identity for Backend APIs (Định danh Client bền vững cho Backend API)
+## 7. [Optional] Persistent Client Identity for Backend APIs (Tùy chọn — Chỉ dành cho dự án có Backend API)
 
-The package automatically generates and securely persists a unique `clientId` in the iOS Keychain (which survives app reinstalls). Attach this identifier along with device hardware headers when calling your backend APIs or proxy gateways for client identification, rate-limiting, and anti-fraud. (Package tự động sinh một `clientId` duy nhất, lưu trữ an toàn trong iOS Keychain và tồn tại qua các lần cài đặt lại app. Sử dụng giá trị này cùng headers thiết bị khi gọi API Backend hoặc proxy gateway để định danh client, giới hạn tần suất request và chống gian lận.)
+> **Skip this section if your app has no backend.** By default, `TNSubscriptionIOS` runs 100% serverless without generating or syncing `clientId` until you explicitly call `TNSubscriptionIOS.clientId` or `request.applyTNIdentityHeaders()`.
+> (**Bỏ qua mục này nếu dự án không có backend.** Mặc định package chạy độc lập hoàn toàn, không sinh hay đồng bộ `clientId` cho đến khi bạn chủ động gọi `TNSubscriptionIOS.clientId` hoặc `applyTNIdentityHeaders()`.)
+
+When your app calls a custom backend API or proxy gateway, attach these headers for rate-limiting and spam detection: (Khi app có gọi API Backend hoặc proxy gateway, gắn các headers sau để định danh client và chống spam:)
 
 ### Standard Identity Headers (Bảng headers định danh tiêu chuẩn)
 
 | Header | Value (Giá trị) | Purpose (Mục đích) |
 |---|---|---|
 | `X-Client-Id` | `TNSubscriptionIOS.clientId` | Unique install UUID across sessions & reinstalls (UUID duy nhất theo lượt cài đặt, bền vững qua các phiên và cài lại app) |
-| `X-Device-Id` | `UIDevice.current.identifierForVendor?.uuidString` | Apple hardware vendor device identifier (Định danh thiết bị phần cứng từ Apple) |
+| `X-Device-Id` | `TNSubscriptionIOS.deviceId` | Apple hardware vendor device identifier (Định danh thiết bị phần cứng từ Apple) |
 | `X-User-Id` | User / Account ID (Optional) (Tùy chọn) | Authenticated user account identifier (ID tài khoản người dùng sau khi đăng nhập) |
 
 ### Usage Example (Ví dụ sử dụng)
@@ -811,14 +801,8 @@ var request = URLRequest(url: backendURL)
 request.httpMethod = "POST"
 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-// Attach client identification headers (Đính kèm headers định danh client)
-request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
-if let deviceId = UIDevice.current.identifierForVendor?.uuidString {
-    request.setValue(deviceId, forHTTPHeaderField: "X-Device-Id")
-}
-if let userId = currentUserId {
-    request.setValue(userId, forHTTPHeaderField: "X-User-Id")
-}
+// One-line helper (Gắn nhanh chỉ với 1 dòng)
+request.applyTNIdentityHeaders(userId: currentUserId)
 ```
 
 ---

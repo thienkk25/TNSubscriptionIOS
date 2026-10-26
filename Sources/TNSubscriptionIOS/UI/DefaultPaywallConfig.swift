@@ -9,7 +9,8 @@ import SwiftUI
 public struct DefaultPaywallConfig {
     
     /// A premium feature displayed in the paywall.
-    public struct Feature {
+    public struct Feature: Identifiable, Hashable {
+        public var id: String { "\(icon)-\(title)-\(subtitle)" }
         public let icon: String
         public let title: String
         public let subtitle: String
@@ -21,13 +22,19 @@ public struct DefaultPaywallConfig {
         }
     }
     
-    // MARK: - Content
+    // MARK: - Content & Targeting
     
     /// The app name displayed in the paywall header.
     public var appName: String
     
     /// The list of premium features shown to the user.
     public var features: [Feature]
+    
+    /// Optional RevenueCat Offering identifier to display (e.g. `"sale"`). If `nil`, uses `offerings.current`.
+    public var offeringIdentifier: String?
+    
+    /// Optional specific entitlement ID this paywall unlocks/checks (e.g. `"Sale"`). If `nil`, checks `isPremium` (any active entitlement).
+    public var entitlementId: String?
     
     /// Privacy Policy URL. Set to `nil` to hide.
     public var privacyURL: URL?
@@ -76,6 +83,8 @@ public struct DefaultPaywallConfig {
             Feature(icon: "bolt.fill", title: NSLocalizedString("Feature Two", comment: ""), subtitle: NSLocalizedString("Get 10x faster processing times", comment: "")),
             Feature(icon: "cloud.fill", title: NSLocalizedString("Feature Three", comment: ""), subtitle: NSLocalizedString("Sync data seamlessly in the cloud", comment: ""))
         ],
+        offeringIdentifier: String? = nil,
+        entitlementId: String? = nil,
         privacyURL: URL? = nil,
         termsURL: URL? = nil,
         accentColor: Color = .cyan,
@@ -94,6 +103,8 @@ public struct DefaultPaywallConfig {
     ) {
         self.appName = appName
         self.features = features
+        self.offeringIdentifier = offeringIdentifier
+        self.entitlementId = entitlementId
         self.privacyURL = privacyURL
         self.termsURL = termsURL
         self.accentColor = accentColor

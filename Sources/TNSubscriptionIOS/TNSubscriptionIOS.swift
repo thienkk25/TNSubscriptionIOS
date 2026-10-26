@@ -3,6 +3,8 @@ import StoreKit
 import RevenueCat
 @_exported import SwiftUI
 import Combine
+import UIKit
+import Security
 
 // MARK: - TNSubscriptionIOS Configuration
 
@@ -43,6 +45,9 @@ public struct TNSubscriptionConfig {
     public let apiKey: String
     public let entitlements: [TNEntitlement]
     public let isIAPEnabled: Bool
+    /// Set to `true` only if your app has a Backend/Proxy and wants `client_id` synced to RevenueCat at launch.
+    /// Defaults to `false` (serverless apps do not need backend identity sync; accessing `TNSubscriptionIOS.clientId` will still lazily sync if needed).
+    public let enableBackendIdentitySync: Bool
     
     /// All product IDs across all entitlements (flattened for StoreKit lookup).
     var allProductIDs: Set<String> {
@@ -58,14 +63,17 @@ public struct TNSubscriptionConfig {
     ///   - apiKey: Your RevenueCat API key.
     ///   - entitlements: Array of entitlements, each with its product IDs.
     ///   - isIAPEnabled: Set to `false` during development to bypass paywall. Default is `true`.
+    ///   - enableBackendIdentitySync: Set to `true` if your app uses a custom Backend/Proxy. Default is `false`.
     public init(
         apiKey: String,
         entitlements: [TNEntitlement],
-        isIAPEnabled: Bool = true
+        isIAPEnabled: Bool = true,
+        enableBackendIdentitySync: Bool = false
     ) {
         self.apiKey = apiKey
         self.entitlements = entitlements
         self.isIAPEnabled = isIAPEnabled
+        self.enableBackendIdentitySync = enableBackendIdentitySync
     }
     
     /// Convenience initializer for apps with a single entitlement.
@@ -81,11 +89,13 @@ public struct TNSubscriptionConfig {
         apiKey: String,
         entitlementId: String = "Premium",
         productIDs: Set<String>,
-        isIAPEnabled: Bool = true
+        isIAPEnabled: Bool = true,
+        enableBackendIdentitySync: Bool = false
     ) {
         self.apiKey = apiKey
         self.entitlements = [TNEntitlement(id: entitlementId, productIDs: productIDs)]
         self.isIAPEnabled = isIAPEnabled
+        self.enableBackendIdentitySync = enableBackendIdentitySync
     }
 }
 
@@ -152,6 +162,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     private let config: TNSubscriptionConfig
     private let productIDCacheKey = "tn_cachedPremiumProductID"
+    private let productIDMapCacheKey = "tn_cachedEntitlementProductMap"
     private var updatesTask: Task<Void, Never>? = nil
     
     // MARK: - Configure
@@ -161,15 +172,19 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     ///
     /// - Parameter config: The subscription configuration.
     public static func configure(config: TNSubscriptionConfig) {
-        // Configure RevenueCat
-        Purchases.configure(withAPIKey: config.apiKey)
+        // Configure RevenueCat when a non-empty API key is provided
+        if !config.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            Purchases.configure(withAPIKey: config.apiKey)
+        }
         
         // Create shared instance
         let instance = TNSubscriptionIOS(config: config)
         shared = instance
         
-        // Initialize and fetch RevenueCat in-app currencies
-        TNInAppCurrencyManager.shared.fetchCurrencies()
+        // Only refresh currencies at launch if the app has already accessed TNInAppCurrencyManager
+        if Purchases.isConfigured, TNInAppCurrencyManager.isInitialized {
+            TNInAppCurrencyManager.shared.fetchCurrencies()
+        }
     }
     
     private init(config: TNSubscriptionConfig) {
@@ -184,10 +199,18 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
             return
         }
         
+        guard Purchases.isConfigured else {
+            self.entitlementState = .locked
+            self.isPremium = false
+            return
+        }
+        
         Purchases.shared.delegate = self
         
-        // Sync client_id as a custom attribute to RevenueCat
-        Self.syncClientIdToRevenueCat()
+        // Only sync client_id on launch if explicitly enabled for Backend/Proxy projects
+        if config.enableBackendIdentitySync {
+            Self.syncClientIdToRevenueCat()
+        }
         
         // 1. Immediate Synchronous Check (Cache) to prevent UI flicker
         if let cached = Purchases.shared.cachedCustomerInfo {
@@ -255,64 +278,119 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         TNInAppCurrencyManager.shared.balance(for: code)
     }
     
-    // MARK: - Persistent Client ID (Backend API & RevenueCat)
+    // MARK: - Persistent Client ID & Identity Headers (Backend API & RevenueCat)
     
     private static let clientIdKeychainAccount = "client_id"
     private static let clientIdUserDefaultsKey = "persistent_client_id"
+    internal static let keychainService: String = Bundle.main.bundleIdentifier ?? "com.tnsubscription.ios"
+    private static var cachedClientId: String?
+    private static var didSyncClientIdToRC = false
+    private static let clientIdLock = NSLock()
     
-    /// A persistent, unique client ID stored in Keychain (survives app reinstalls).
+    /// A persistent, unique client ID stored in Keychain (survives app reinstalls) and cached in memory for $O(1)$ access.
     ///
-    /// Use this value for the `X-Client-Id` HTTP header when calling your backend APIs or proxy gateways
-    /// for rate-limiting, spam prevention, and client session identification:
-    /// ```swift
-    /// request.setValue(TNSubscriptionIOS.clientId, forHTTPHeaderField: "X-Client-Id")
-    /// ```
+    /// **Optional**: Only needed when your app calls a custom Backend API or Proxy Gateway (`X-Client-Id` header).
+    /// Serverless apps (using only StoreKit 2 / RevenueCat) do not need to use this property.
     public static var clientId: String {
-        // 1. Try Keychain first (survives reinstall)
-        if let keychainId = loadFromKeychain(account: clientIdKeychainAccount), !keychainId.isEmpty {
-            return keychainId
-        }
-        
-        // 2. Fallback: check UserDefaults
-        if let defaultsId = UserDefaults.standard.string(forKey: clientIdUserDefaultsKey), !defaultsId.isEmpty {
-            // Migrate to Keychain for durability
+        clientIdLock.lock()
+        let resolvedId: String
+        if let memoryCached = cachedClientId, !memoryCached.isEmpty {
+            resolvedId = memoryCached
+        } else if let keychainId = loadFromKeychain(account: clientIdKeychainAccount), !keychainId.isEmpty {
+            cachedClientId = keychainId
+            resolvedId = keychainId
+        } else if let defaultsId = UserDefaults.standard.string(forKey: clientIdUserDefaultsKey), !defaultsId.isEmpty {
             saveToKeychain(account: clientIdKeychainAccount, value: defaultsId)
-            return defaultsId
+            cachedClientId = defaultsId
+            resolvedId = defaultsId
+        } else {
+            let newId = UUID().uuidString
+            saveToKeychain(account: clientIdKeychainAccount, value: newId)
+            UserDefaults.standard.set(newId, forKey: clientIdUserDefaultsKey)
+            cachedClientId = newId
+            resolvedId = newId
         }
+        let shouldSync = !didSyncClientIdToRC && Purchases.isConfigured
+        if shouldSync {
+            didSyncClientIdToRC = true
+        }
+        clientIdLock.unlock()
         
-        // 3. Generate new UUID and persist everywhere
-        let newId = UUID().uuidString
-        saveToKeychain(account: clientIdKeychainAccount, value: newId)
-        UserDefaults.standard.set(newId, forKey: clientIdUserDefaultsKey)
-        return newId
+        if shouldSync {
+            Purchases.shared.attribution.setAttributes(["client_id": resolvedId])
+        }
+        return resolvedId
+    }
+    
+    /// The hardware vendor device identifier (`UIDevice.current.identifierForVendor?.uuidString`).
+    public static var deviceId: String {
+        UIDevice.current.identifierForVendor?.uuidString ?? ""
+    }
+    
+    /// Standard TN Studio Proxy Gateway client identity HTTP headers (`X-Client-Id`, `X-Device-Id`, and optional `X-User-Id`).
+    ///
+    /// - Parameter userId: Optional authenticated user ID.
+    /// - Returns: Dictionary of HTTP header fields.
+    public static func identityHeaders(userId: String? = nil) -> [String: String] {
+        var headers: [String: String] = [
+            "X-Client-Id": clientId
+        ]
+        let devId = deviceId
+        if !devId.isEmpty {
+            headers["X-Device-Id"] = devId
+        }
+        if let uid = userId, !uid.isEmpty {
+            headers["X-User-Id"] = uid
+        }
+        return headers
     }
     
     // MARK: - Keychain Helpers
     
-    private static func loadFromKeychain(account: String) -> String? {
-        let query: [String: Any] = [
+    internal static func loadFromKeychain(account: String) -> String? {
+        // 1. Query with kSecAttrService
+        let scopedQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
             kSecAttrAccount as String: account,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
         var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let scopedStatus = SecItemCopyMatching(scopedQuery as CFDictionary, &result)
+        if scopedStatus == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8), !value.isEmpty {
+            return value
+        }
+        
+        // 2. Backward-compatible fallback: query legacy item without kSecAttrService and migrate
+        let legacyQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var legacyResult: AnyObject?
+        let legacyStatus = SecItemCopyMatching(legacyQuery as CFDictionary, &legacyResult)
+        guard legacyStatus == errSecSuccess, let data = legacyResult as? Data, let legacyValue = String(data: data, encoding: .utf8), !legacyValue.isEmpty else {
+            return nil
+        }
+        saveToKeychain(account: account, value: legacyValue)
+        return legacyValue
     }
     
-    private static func saveToKeychain(account: String, value: String) {
+    internal static func saveToKeychain(account: String, value: String) {
         guard let data = value.data(using: .utf8) else { return }
         
         let deleteQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
             kSecAttrAccount as String: account
         ]
         SecItemDelete(deleteQuery as CFDictionary)
         
         let addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: keychainService,
             kSecAttrAccount as String: account,
             kSecValueData as String: data,
             kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
@@ -322,6 +400,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     /// Syncs the persistent client_id to RevenueCat as a custom subscriber attribute.
     private static func syncClientIdToRevenueCat() {
+        guard Purchases.isConfigured else { return }
         let id = clientId
         Purchases.shared.attribution.setAttributes(["client_id": id])
         #if DEBUG
@@ -342,6 +421,29 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         return active
     }
     
+    /// Caches active entitlement -> productID mapping for offline StoreKit 2 verification, or clears cache if none active.
+    private func cacheActiveEntitlementProducts(from info: CustomerInfo) {
+        var entitlementMap: [String: String] = [:]
+        var firstProductID: String?
+        
+        for entitlement in config.entitlements {
+            if let ent = info.entitlements[entitlement.id], ent.isActive {
+                entitlementMap[entitlement.id] = ent.productIdentifier
+                if firstProductID == nil {
+                    firstProductID = ent.productIdentifier
+                }
+            }
+        }
+        
+        if let firstProductID = firstProductID {
+            UserDefaults.standard.set(firstProductID, forKey: productIDCacheKey)
+            UserDefaults.standard.set(entitlementMap, forKey: productIDMapCacheKey)
+        } else {
+            UserDefaults.standard.removeObject(forKey: productIDCacheKey)
+            UserDefaults.standard.removeObject(forKey: productIDMapCacheKey)
+        }
+    }
+    
     /// Main source of truth resolver
     @MainActor
     public func resolveEntitlement() async {
@@ -350,17 +452,17 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
             return
         }
         
-        // Priority 1: StoreKit 2 Local Entitlements (Works Offline, highly reliable)
+        // Priority 1: StoreKit 2 Local Entitlements (Works Offline, immediate unlock)
         let storeKitActive = await syncWithStoreKit()
         if !storeKitActive.isEmpty {
-            if self.entitlementState != .unlocked {
-                updateState(isPremium: true, state: .unlocked, activeEntitlements: storeKitActive)
-            } else {
-                // Merge with existing active entitlements
-                self.activeEntitlements.formUnion(storeKitActive)
+            updateState(isPremium: true, state: .unlocked, activeEntitlements: storeKitActive)
+            // Also sync with RevenueCat to pick up cross-platform/promotional entitlements and update customerInfo
+            Task { @MainActor in
+                let rcActive = await self.syncWithRevenueCat()
+                let combined = storeKitActive.union(rcActive)
+                let hasPremium = !combined.isEmpty
+                self.updateState(isPremium: hasPremium, state: hasPremium ? .unlocked : .locked, activeEntitlements: combined)
             }
-            // Fire and forget RC sync for backend parity
-            Task { await syncWithRevenueCat() }
             return
         }
         
@@ -368,35 +470,47 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         let rcActive = await syncWithRevenueCat()
         let hasPremium = !rcActive.isEmpty
         let newState: EntitlementState = hasPremium ? .unlocked : .locked
-        if self.entitlementState != newState || self.activeEntitlements != rcActive {
+        if self.entitlementState != newState || self.activeEntitlements != rcActive || self.isPremium != hasPremium {
             updateState(isPremium: hasPremium, state: newState, activeEntitlements: rcActive)
         }
     }
     
     /// Checks StoreKit 2 local state directly. Returns the set of active entitlement IDs.
     private func syncWithStoreKit() async -> Set<String> {
+        let cachedMap = UserDefaults.standard.dictionary(forKey: productIDMapCacheKey) as? [String: String] ?? [:]
         let cachedValidProductID = UserDefaults.standard.string(forKey: productIDCacheKey)
         var activeIDs = Set<String>()
+        let now = Date()
         
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }
             
-            if transaction.revocationDate == nil {
-                // Check against configured Product IDs per entitlement
-                for entitlement in config.entitlements {
-                    if entitlement.productIDs.contains(transaction.productID) {
-                        activeIDs.insert(entitlement.id)
-                    }
+            guard transaction.revocationDate == nil else { continue }
+            if let expirationDate = transaction.expirationDate, expirationDate < now {
+                continue
+            }
+            
+            var matchedConfiguredEntitlement = false
+            // Check against configured Product IDs per entitlement
+            for entitlement in config.entitlements {
+                if entitlement.productIDs.contains(transaction.productID) {
+                    activeIDs.insert(entitlement.id)
+                    matchedConfiguredEntitlement = true
                 }
-                
-                // Fallback to dynamically cached Product ID from RevenueCat
-                if activeIDs.isEmpty, let cachedID = cachedValidProductID, !cachedID.isEmpty {
-                    if transaction.productID == cachedID {
-                        // We don't know which entitlement it belongs to, mark first as active
-                        if let first = config.entitlements.first {
-                            activeIDs.insert(first.id)
-                        }
-                    }
+            }
+            
+            // Fallback to dynamically cached entitlement -> productID map from RevenueCat
+            if !matchedConfiguredEntitlement {
+                for (entitlementId, cachedProdId) in cachedMap where cachedProdId == transaction.productID {
+                    activeIDs.insert(entitlementId)
+                    matchedConfiguredEntitlement = true
+                }
+            }
+            
+            // Legacy single productID fallback
+            if !matchedConfiguredEntitlement, activeIDs.isEmpty, let cachedID = cachedValidProductID, !cachedID.isEmpty {
+                if transaction.productID == cachedID, let first = config.entitlements.first {
+                    activeIDs.insert(first.id)
                 }
             }
         }
@@ -407,29 +521,18 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     @MainActor
     @discardableResult
     private func syncWithRevenueCat() async -> Set<String> {
+        guard Purchases.isConfigured else { return [] }
         do {
             let info = try await Purchases.shared.customerInfo()
             updateState(info: info)
             let active = resolveActiveEntitlements(from: info)
-            
-            // Cache active product IDs for StoreKit offline fallback
-            for entitlement in config.entitlements {
-                if let ent = info.entitlements[entitlement.id], ent.isActive {
-                    UserDefaults.standard.set(ent.productIdentifier, forKey: productIDCacheKey)
-                    break // Cache one is enough for fallback
-                }
-            }
+            cacheActiveEntitlementProducts(from: info)
             return active
         } catch {
             if let cached = Purchases.shared.cachedCustomerInfo {
                 updateState(info: cached)
                 let active = resolveActiveEntitlements(from: cached)
-                for entitlement in config.entitlements {
-                    if let ent = cached.entitlements[entitlement.id], ent.isActive {
-                        UserDefaults.standard.set(ent.productIdentifier, forKey: productIDCacheKey)
-                        break
-                    }
-                }
+                cacheActiveEntitlementProducts(from: cached)
                 return active
             }
             return []
@@ -450,7 +553,8 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     /// The product ID for a specific entitlement, if active.
     public func currentProductID(for entitlementId: String) -> String? {
-        customerInfo?.entitlements[entitlementId]?.productIdentifier
+        guard let ent = customerInfo?.entitlements[entitlementId], ent.isActive else { return nil }
+        return ent.productIdentifier
     }
     
     /// A human-readable display name for the user's current plan.
@@ -461,10 +565,11 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     /// Returns a human-readable name for a given product ID.
     public static func displayName(forProductID productID: String) -> String {
-        if productID.contains("week") { return NSLocalizedString("Weekly", comment: "") }
-        if productID.contains("month") { return NSLocalizedString("Monthly", comment: "") }
-        if productID.contains("year") || productID.contains("annual") { return NSLocalizedString("Yearly", comment: "") }
-        if productID.contains("life") { return NSLocalizedString("Lifetime", comment: "") }
+        let lower = productID.lowercased()
+        if lower.contains("week") { return NSLocalizedString("Weekly", comment: "") }
+        if lower.contains("month") { return NSLocalizedString("Monthly", comment: "") }
+        if lower.contains("year") || lower.contains("annual") { return NSLocalizedString("Yearly", comment: "") }
+        if lower.contains("life") { return NSLocalizedString("Lifetime", comment: "") }
         return NSLocalizedString("Premium", comment: "")
     }
     
@@ -486,26 +591,38 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     /// Whether a package should be marked as "recommended" (defaults to annual plans).
     nonisolated public static func isRecommendedPackage(_ package: Package) -> Bool {
-        package.packageType == .annual || package.storeProduct.productIdentifier.contains("yearly")
+        package.packageType == .annual || package.storeProduct.productIdentifier.lowercased().contains("yearly")
     }
     
     /// Fetches available offerings from RevenueCat (fire-and-forget).
-    public func fetchOfferings() {
+    /// - Parameter offeringIdentifier: Optional specific offering identifier (e.g., `"sale"`). Defaults to `nil` (uses `offerings.current`).
+    public func fetchOfferings(offeringIdentifier: String? = nil) {
         Task {
-            await loadOfferings()
+            await loadOfferings(offeringIdentifier: offeringIdentifier)
         }
     }
     
     /// Loads available offerings from RevenueCat.
+    /// - Parameter offeringIdentifier: Optional specific offering identifier (e.g., `"sale"`). Defaults to `nil` (uses `offerings.current`).
     @MainActor
-    public func loadOfferings() async {
+    public func loadOfferings(offeringIdentifier: String? = nil) async {
+        guard Purchases.isConfigured else {
+            availablePackages = []
+            return
+        }
         isLoadingOfferings = true
         offeringsError = nil
         defer { isLoadingOfferings = false }
         
         do {
             let offerings = try await Purchases.shared.offerings()
-            let packages = offerings.current?.availablePackages ?? []
+            let targetOffering: Offering?
+            if let id = offeringIdentifier, !id.isEmpty {
+                targetOffering = offerings.offering(identifier: id) ?? offerings.current
+            } else {
+                targetOffering = offerings.current
+            }
+            let packages = targetOffering?.availablePackages ?? []
             availablePackages = packages.sorted {
                 Self.packageSortOrder($0) < Self.packageSortOrder($1)
             }
@@ -518,21 +635,30 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         }
     }
     
-    /// Purchases a package.
+    /// Purchases a package using Swift Concurrency (`async/await`).
+    @MainActor
+    @discardableResult
+    public func purchaseAsync(package: Package) async throws -> CustomerInfo {
+        isPurchasing = true
+        defer { isPurchasing = false }
+        
+        let result = try await Purchases.shared.purchase(package: package)
+        forceUpdateState(from: result.customerInfo)
+        if result.userCancelled {
+            throw PurchaseFlowError.userCancelled
+        }
+        if TNInAppCurrencyManager.isInitialized {
+            TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
+        }
+        return result.customerInfo
+    }
+    
+    /// Purchases a package with a completion callback (guaranteed to execute on `@MainActor`).
     public func purchase(package: Package, completion: @escaping (Result<CustomerInfo, Error>) -> Void) {
-        Task {
-            await MainActor.run { isPurchasing = true }
-            defer { Task { @MainActor in self.isPurchasing = false } }
-            
+        Task { @MainActor in
             do {
-                let result = try await Purchases.shared.purchase(package: package)
-                await forceUpdateState(from: result.customerInfo)
-                if result.userCancelled {
-                    completion(.failure(PurchaseFlowError.userCancelled))
-                } else {
-                    TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
-                    completion(.success(result.customerInfo))
-                }
+                let customerInfo = try await purchaseAsync(package: package)
+                completion(.success(customerInfo))
             } catch {
                 completion(.failure(error))
             }
@@ -559,9 +685,9 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         }
     }
     
-    /// Restores purchases via StoreKit 2 + RevenueCat.
+    /// Restores purchases via StoreKit 2 + RevenueCat (completion callback is guaranteed to execute on `@MainActor`).
     public func restorePurchases(completion: @escaping (Result<Bool, Error>) -> Void) {
-        Task {
+        Task { @MainActor in
             do {
                 let success = try await restorePurchasesAsync()
                 completion(.success(success))
@@ -571,8 +697,10 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         }
     }
     
+    /// Restores purchases via StoreKit 2 + RevenueCat using Swift Concurrency (`async/await`).
     @MainActor
-    private func restorePurchasesAsync() async throws -> Bool {
+    @discardableResult
+    public func restorePurchasesAsync() async throws -> Bool {
         let previousState = self.entitlementState
         let previousPremium = self.isPremium
         let previousActive = self.activeEntitlements
@@ -590,9 +718,20 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         let storeKitActive = await syncWithStoreKit()
         if !storeKitActive.isEmpty {
             updateState(isPremium: true, state: .unlocked, activeEntitlements: storeKitActive)
-            Self.syncClientIdToRevenueCat()
-            TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
-            Task { try? await Purchases.shared.restorePurchases() }
+            if config.enableBackendIdentitySync {
+                Self.syncClientIdToRevenueCat()
+            }
+            if TNInAppCurrencyManager.isInitialized {
+                TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
+            }
+            Task { @MainActor in
+                if let info = try? await Purchases.shared.restorePurchases() {
+                    let rcActive = self.resolveActiveEntitlements(from: info)
+                    self.cacheActiveEntitlementProducts(from: info)
+                    let combined = storeKitActive.union(rcActive)
+                    self.updateState(isPremium: !combined.isEmpty, state: !combined.isEmpty ? .unlocked : .locked, activeEntitlements: combined, info: info)
+                }
+            }
             return true
         }
         
@@ -600,10 +739,15 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
             let info = try await Purchases.shared.restorePurchases()
             let active = resolveActiveEntitlements(from: info)
             let isSuccess = !active.isEmpty
+            cacheActiveEntitlementProducts(from: info)
             updateState(isPremium: isSuccess, state: isSuccess ? .unlocked : .locked, activeEntitlements: active, info: info)
             if isSuccess {
-                Self.syncClientIdToRevenueCat()
-                TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
+                if config.enableBackendIdentitySync {
+                    Self.syncClientIdToRevenueCat()
+                }
+                if TNInAppCurrencyManager.isInitialized {
+                    TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
+                }
             }
             return isSuccess
         } catch {
@@ -643,13 +787,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         self.activeEntitlements = active
         self.customerInfo = info
         
-        // Cache first active product ID for offline fallback
-        for entitlement in config.entitlements {
-            if let ent = info.entitlements[entitlement.id], ent.isActive {
-                UserDefaults.standard.set(ent.productIdentifier, forKey: productIDCacheKey)
-                break
-            }
-        }
+        cacheActiveEntitlementProducts(from: info)
         
         // Refresh entitlement state after 1 second sandbox delay safety net
         Task {
@@ -663,7 +801,9 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
 
 extension TNSubscriptionIOS: PurchasesDelegate {
     nonisolated public func purchases(_ purchases: Purchases, receivedUpdated customerInfo: CustomerInfo) {
-        TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
+        if TNInAppCurrencyManager.isInitialized {
+            TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
+        }
         Task { @MainActor in
             self.customerInfo = customerInfo
             if !self.config.isIAPEnabled {
@@ -676,17 +816,29 @@ extension TNSubscriptionIOS: PurchasesDelegate {
             let active = self.resolveActiveEntitlements(from: customerInfo)
             let isActive = !active.isEmpty
             
-            // Cache first active product ID
-            for entitlement in self.config.entitlements {
-                if let ent = customerInfo.entitlements[entitlement.id], ent.isActive {
-                    UserDefaults.standard.set(ent.productIdentifier, forKey: self.productIDCacheKey)
-                    break
-                }
-            }
+            self.cacheActiveEntitlementProducts(from: customerInfo)
             
             self.activeEntitlements = active
             self.entitlementState = isActive ? .unlocked : .locked
             self.isPremium = isActive
         }
+    }
+}
+
+// MARK: - URLRequest Identity Headers Extension
+
+public extension URLRequest {
+    /// Attaches standard TN Studio Proxy Gateway client identity headers (`X-Client-Id`, `X-Device-Id`, and optional `X-User-Id`).
+    mutating func applyTNIdentityHeaders(userId: String? = nil) {
+        for (header, value) in TNSubscriptionIOS.identityHeaders(userId: userId) {
+            setValue(value, forHTTPHeaderField: header)
+        }
+    }
+    
+    /// Returns a copy of the request with TN Studio Proxy Gateway client identity headers attached.
+    func applyingTNIdentityHeaders(userId: String? = nil) -> URLRequest {
+        var copy = self
+        copy.applyTNIdentityHeaders(userId: userId)
+        return copy
     }
 }

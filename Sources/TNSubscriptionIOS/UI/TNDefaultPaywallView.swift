@@ -1,4 +1,5 @@
 import SwiftUI
+import StoreKit
 import RevenueCat
 
 // MARK: - Default Paywall View
@@ -6,8 +7,9 @@ import RevenueCat
 /// The built-in paywall view provided by TNSubscriptionIOS.
 /// Fully configurable via `DefaultPaywallConfig`.
 ///
-/// Host apps can use this directly or present via `TNSubscriptionIOS.presentDefaultPaywall(from:config:)`.
-struct TNDefaultPaywallView: View {
+/// Host apps can use this directly in SwiftUI (`.sheet { TNDefaultPaywallView(config: ...) }`)
+/// or present from UIKit via `TNSubscriptionIOS.presentDefaultPaywall(from:config:)`.
+public struct TNDefaultPaywallView: View {
     @ObservedObject private var manager = TNSubscriptionIOS.shared
     @Environment(\.dismiss) private var dismiss
     
@@ -15,7 +17,32 @@ struct TNDefaultPaywallView: View {
     @State private var activeAlert: UpgradeAlert?
     @State private var isRestoring = false
     
-    let config: DefaultPaywallConfig
+    public let config: DefaultPaywallConfig
+    
+    public init(config: DefaultPaywallConfig = DefaultPaywallConfig()) {
+        self.config = config
+    }
+    
+    private var isTargetUnlocked: Bool {
+        if let targetId = config.entitlementId, !targetId.isEmpty {
+            return manager.hasEntitlement(targetId)
+        }
+        return manager.entitlementState == .unlocked || manager.isPremium
+    }
+    
+    private var displayedPackages: [Package] {
+        guard let targetId = config.entitlementId, !targetId.isEmpty else {
+            return manager.availablePackages
+        }
+        let configuredProducts = manager.productIDs(for: targetId)
+        guard !configuredProducts.isEmpty, config.offeringIdentifier == nil else {
+            return manager.availablePackages
+        }
+        let filtered = manager.availablePackages.filter {
+            configuredProducts.contains($0.storeProduct.productIdentifier)
+        }
+        return filtered.isEmpty ? manager.availablePackages : filtered
+    }
     
     private enum UpgradeAlert: Identifiable {
         case purchaseSuccess
@@ -35,7 +62,7 @@ struct TNDefaultPaywallView: View {
         }
     }
     
-    var body: some View {
+    public var body: some View {
         NavigationStack {
             ZStack {
                 config.backgroundColor.ignoresSafeArea()
@@ -46,7 +73,7 @@ struct TNDefaultPaywallView: View {
                         
                         if manager.entitlementState == .unknown {
                             verifyingSection
-                        } else if manager.entitlementState == .unlocked {
+                        } else if isTargetUnlocked {
                             activePlanSection
                         } else {
                             featuresSection
@@ -74,16 +101,16 @@ struct TNDefaultPaywallView: View {
         .preferredColorScheme(config.preferredColorScheme)
         .onAppear {
             manager.checkSubscriptionStatus()
-            manager.fetchOfferings()
+            manager.fetchOfferings(offeringIdentifier: config.offeringIdentifier)
             if selectedPackage == nil {
-                selectedPackage = manager.availablePackages.first(where: TNSubscriptionIOS.isRecommendedPackage)
-                    ?? manager.availablePackages.first
+                selectedPackage = displayedPackages.first(where: TNSubscriptionIOS.isRecommendedPackage)
+                    ?? displayedPackages.first
             }
         }
-        .onChange(of: manager.availablePackages.map(\.identifier)) { _ in
-            guard selectedPackage == nil, !manager.availablePackages.isEmpty else { return }
-            selectedPackage = manager.availablePackages.first(where: TNSubscriptionIOS.isRecommendedPackage)
-                ?? manager.availablePackages.first
+        .onChange(of: displayedPackages.map(\.identifier)) { _ in
+            guard selectedPackage == nil, !displayedPackages.isEmpty else { return }
+            selectedPackage = displayedPackages.first(where: TNSubscriptionIOS.isRecommendedPackage)
+                ?? displayedPackages.first
         }
         .alert(item: $activeAlert) { alert in
             switch alert {
@@ -157,21 +184,17 @@ struct TNDefaultPaywallView: View {
     }
     
     private var headerTitle: String {
-        switch manager.entitlementState {
-        case .unlocked:
+        if isTargetUnlocked {
             return NSLocalizedString("You're Premium", comment: "")
-        default:
-            return NSLocalizedString("Upgrade to Premium", comment: "")
         }
+        return NSLocalizedString("Upgrade to Premium", comment: "")
     }
     
     private var headerSubtitle: String {
-        switch manager.entitlementState {
-        case .unlocked:
+        if isTargetUnlocked {
             return NSLocalizedString("Thank you for supporting the app. Manage or change your plan below.", comment: "")
-        default:
-            return NSLocalizedString("Unlock all premium features, custom designs, and settings.", comment: "")
         }
+        return NSLocalizedString("Unlock all premium features, custom designs, and settings.", comment: "")
     }
     
     private var verifyingSection: some View {
@@ -242,7 +265,7 @@ struct TNDefaultPaywallView: View {
                 .foregroundStyle(config.textPrimaryColor)
             
             VStack(spacing: 10) {
-                ForEach(config.features, id: \.title) { feature in
+                ForEach(config.features) { feature in
                     HStack(alignment: .top, spacing: 14) {
                         Image(systemName: feature.icon)
                             .font(.body)
@@ -280,14 +303,14 @@ struct TNDefaultPaywallView: View {
                     Spacer()
                 }
                 .padding(.vertical, 24)
-            } else if manager.availablePackages.isEmpty {
+            } else if displayedPackages.isEmpty {
                 VStack(spacing: 12) {
                     Text(manager.offeringsError ?? NSLocalizedString("Plans could not be loaded.", comment: ""))
                         .font(.caption)
                         .foregroundStyle(config.textSecondaryColor)
                         .multilineTextAlignment(.center)
                     Button(NSLocalizedString("Retry", comment: "")) {
-                        manager.fetchOfferings()
+                        manager.fetchOfferings(offeringIdentifier: config.offeringIdentifier)
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(config.accentColor)
@@ -297,7 +320,7 @@ struct TNDefaultPaywallView: View {
                 .background(config.cardColor)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             } else {
-                ForEach(manager.availablePackages, id: \.identifier) { package in
+                ForEach(displayedPackages, id: \.identifier) { package in
                     planCard(for: package)
                 }
             }
@@ -358,12 +381,12 @@ struct TNDefaultPaywallView: View {
             )
         }
         .buttonStyle(.plain)
-        .disabled(isCurrent && manager.entitlementState == .unlocked && package.packageType != .lifetime)
+        .disabled(isCurrent && isTargetUnlocked && package.packageType != .lifetime)
     }
     
     private var purchaseButton: some View {
         Group {
-            if !manager.availablePackages.isEmpty || manager.entitlementState == .unlocked {
+            if !displayedPackages.isEmpty || isTargetUnlocked {
                 Button(action: purchaseSelectedPlan) {
                     Group {
                         if manager.isPurchasing {
@@ -387,7 +410,7 @@ struct TNDefaultPaywallView: View {
     }
     
     private var purchaseButtonTitle: String {
-        if manager.entitlementState == .unlocked {
+        if isTargetUnlocked {
             return NSLocalizedString("Switch Plan", comment: "")
         }
         return NSLocalizedString("Continue", comment: "")
@@ -463,19 +486,17 @@ struct TNDefaultPaywallView: View {
         }
         
         manager.purchase(package: package) { result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success:
-                    if manager.isPremium {
-                        activeAlert = .purchaseSuccess
-                    }
-                case .failure(let error):
-                    if let flowError = error as? TNSubscriptionIOS.PurchaseFlowError,
-                       case .userCancelled = flowError {
-                        return
-                    }
-                    activeAlert = .purchaseFailed(error.localizedDescription)
+            switch result {
+            case .success:
+                if isTargetUnlocked || manager.isPremium {
+                    activeAlert = .purchaseSuccess
                 }
+            case .failure(let error):
+                if let flowError = error as? TNSubscriptionIOS.PurchaseFlowError,
+                   case .userCancelled = flowError {
+                    return
+                }
+                activeAlert = .purchaseFailed(error.localizedDescription)
             }
         }
     }
@@ -483,21 +504,32 @@ struct TNDefaultPaywallView: View {
     private func restorePurchases() {
         isRestoring = true
         manager.restorePurchases { result in
-            DispatchQueue.main.async {
-                isRestoring = false
-                switch result {
-                case .success(let hasPremium):
-                    activeAlert = hasPremium ? .restoreSuccess : .noSubscription
-                case .failure:
-                    activeAlert = .restoreFailed
-                }
+            isRestoring = false
+            switch result {
+            case .success(let hasPremium):
+                activeAlert = hasPremium ? .restoreSuccess : .noSubscription
+            case .failure:
+                activeAlert = .restoreFailed
             }
         }
     }
     
     private func openSubscriptionManagement() {
-        if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
-            UIApplication.shared.open(url)
+        Task { @MainActor in
+            if let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first(where: { $0.activationState == .foregroundActive })
+                ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+                do {
+                    try await AppStore.showManageSubscriptions(in: windowScene)
+                    return
+                } catch {
+                    // Fallback to external URL if native sheet fails
+                }
+            }
+            if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
+                await UIApplication.shared.open(url)
+            }
         }
     }
 }
