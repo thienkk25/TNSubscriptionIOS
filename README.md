@@ -847,6 +847,7 @@ request.applyTNIdentityHeaders(userId: currentUserId)
 | `fetchOfferings()` | Load offerings from RevenueCat (Load offerings từ RevenueCat) |
 | `purchase(package:completion:)` | Purchase a package (Mua gói) |
 | `restorePurchases(completion:)` | Restore purchases (Khôi phục mua hàng) |
+| `presentOfferCodeRedemption(completion:)` | Present iOS native Offer Code Redemption sheet (Mở sheet nhập mã ưu đãi gốc của iOS) |
 | `checkSubscriptionStatus()` | Re-check entitlement status (Kiểm tra lại trạng thái) |
 | `currentPlanProductID → String?` | First active plan's product ID (Product ID của plan active đầu tiên) |
 | `currentProductID(for:) → String?` | Product ID for specific entitlement (Product ID cho entitlement cụ thể) |
@@ -938,6 +939,9 @@ All properties have sensible defaults. Only customize what you need. (Tất cả
 |---|---|---|---|
 | `appName` | `String` | `"Premium"` | App name in header (Tên app ở header) |
 | `features` | `[Feature]` | 3 defaults | Premium features list (Danh sách tính năng premium) |
+| `offeringIdentifier` | `String?` | `nil` | Specific RevenueCat Offering ID (ID Offering cụ thể) |
+| `entitlementId` | `String?` | `nil` | Specific target Entitlement ID (ID Entitlement mục tiêu) |
+| `showRedeemCodeButton` | `Bool` | `true` | Show "Redeem Code" button in footer (Hiện nút nhập mã ưu đãi ở cuối paywall) |
 | `privacyURL` | `URL?` | `nil` | Privacy Policy link (Link chính sách bảo mật) |
 | `termsURL` | `URL?` | `nil` | Terms of Use link (Link điều khoản sử dụng) |
 | `accentColor` | `Color` | `.cyan` | Primary accent color (Màu accent chính) |

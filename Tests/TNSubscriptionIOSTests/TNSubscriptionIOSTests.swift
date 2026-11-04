@@ -103,11 +103,13 @@ final class TNSubscriptionIOSTests: XCTestCase {
         let config = DefaultPaywallConfig(
             appName: "TestApp",
             offeringIdentifier: "sale",
-            entitlementId: "Sale"
+            entitlementId: "Sale",
+            showRedeemCodeButton: true
         )
         let paywallView = TNDefaultPaywallView(config: config)
         XCTAssertEqual(paywallView.config.appName, "TestApp")
         XCTAssertEqual(paywallView.config.offeringIdentifier, "sale")
         XCTAssertEqual(paywallView.config.entitlementId, "Sale")
+        XCTAssertTrue(paywallView.config.showRedeemCodeButton)
     }
 }

@@ -36,6 +36,9 @@ public struct DefaultPaywallConfig {
     /// Optional specific entitlement ID this paywall unlocks/checks (e.g. `"Sale"`). If `nil`, checks `isPremium` (any active entitlement).
     public var entitlementId: String?
     
+    /// Whether to display the "Redeem Code" button in the paywall footer to open Apple's native Offer Code sheet. Default is `true`.
+    public var showRedeemCodeButton: Bool
+    
     /// Privacy Policy URL. Set to `nil` to hide.
     public var privacyURL: URL?
     
@@ -85,6 +88,7 @@ public struct DefaultPaywallConfig {
         ],
         offeringIdentifier: String? = nil,
         entitlementId: String? = nil,
+        showRedeemCodeButton: Bool = true,
         privacyURL: URL? = nil,
         termsURL: URL? = nil,
         accentColor: Color = .cyan,
@@ -105,6 +109,7 @@ public struct DefaultPaywallConfig {
         self.features = features
         self.offeringIdentifier = offeringIdentifier
         self.entitlementId = entitlementId
+        self.showRedeemCodeButton = showRedeemCodeButton
         self.privacyURL = privacyURL
         self.termsURL = termsURL
         self.accentColor = accentColor

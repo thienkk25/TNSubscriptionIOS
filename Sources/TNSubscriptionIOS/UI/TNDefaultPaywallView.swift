@@ -16,6 +16,7 @@ public struct TNDefaultPaywallView: View {
     @State private var selectedPackage: Package?
     @State private var activeAlert: UpgradeAlert?
     @State private var isRestoring = false
+    @State private var isRedeemingOfferCode = false
     
     public let config: DefaultPaywallConfig
     
@@ -111,6 +112,16 @@ public struct TNDefaultPaywallView: View {
             guard selectedPackage == nil, !displayedPackages.isEmpty else { return }
             selectedPackage = displayedPackages.first(where: TNSubscriptionIOS.isRecommendedPackage)
                 ?? displayedPackages.first
+        }
+        .offerCodeRedemption(isPresented: $isRedeemingOfferCode) { result in
+            if case .success = result {
+                Task { @MainActor in
+                    await manager.resolveEntitlement()
+                    if isTargetUnlocked || manager.isPremium {
+                        activeAlert = .purchaseSuccess
+                    }
+                }
+            }
         }
         .alert(item: $activeAlert) { alert in
             switch alert {
@@ -432,17 +443,31 @@ public struct TNDefaultPaywallView: View {
     
     private var footerActions: some View {
         VStack(spacing: 12) {
-            Button(action: restorePurchases) {
-                if isRestoring {
-                    ProgressView()
-                        .tint(config.accentColor)
-                } else {
-                    Text(NSLocalizedString("Restore Purchases", comment: ""))
+            HStack(spacing: 16) {
+                Button(action: restorePurchases) {
+                    if isRestoring {
+                        ProgressView()
+                            .tint(config.accentColor)
+                    } else {
+                        Text(NSLocalizedString("Restore Purchases", comment: ""))
+                            .font(.subheadline)
+                            .foregroundStyle(config.accentColor)
+                    }
+                }
+                .disabled(isRestoring)
+                
+                if config.showRedeemCodeButton {
+                    Text("•")
                         .font(.subheadline)
-                        .foregroundStyle(config.accentColor)
+                        .foregroundStyle(config.textMutedColor)
+                    
+                    Button(action: redeemOfferCode) {
+                        Text(NSLocalizedString("Redeem Code", comment: ""))
+                            .font(.subheadline)
+                            .foregroundStyle(config.accentColor)
+                    }
                 }
             }
-            .disabled(isRestoring)
             
             legalLinksRow
             
@@ -512,6 +537,10 @@ public struct TNDefaultPaywallView: View {
                 activeAlert = .restoreFailed
             }
         }
+    }
+    
+    private func redeemOfferCode() {
+        isRedeemingOfferCode = true
     }
     
     private func openSubscriptionManagement() {

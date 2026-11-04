@@ -685,6 +685,22 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         }
     }
     
+    /// Presents the native iOS App Store Offer Code Redemption Sheet.
+    /// Once the user redeems a code, StoreKit 2 (`Transaction.updates`) and RevenueCat (`PurchasesDelegate`)
+    /// automatically unlock the corresponding entitlement.
+    ///
+    /// ```swift
+    /// TNSubscriptionIOS.shared.presentOfferCodeRedemption()
+    /// ```
+    @MainActor
+    public func presentOfferCodeRedemption() {
+        if Purchases.isConfigured {
+            Purchases.shared.presentCodeRedemptionSheet()
+        } else {
+            SKPaymentQueue.default().presentCodeRedemptionSheet()
+        }
+    }
+    
     /// Restores purchases via StoreKit 2 + RevenueCat (completion callback is guaranteed to execute on `@MainActor`).
     public func restorePurchases(completion: @escaping (Result<Bool, Error>) -> Void) {
         Task { @MainActor in
