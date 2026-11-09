@@ -486,6 +486,65 @@ struct FeatureView: View {
 }
 ```
 
+---
+
+## 4.1. Introductory Offers, Promotional Offers & Offer Codes (Ưu đãi người mới, Khuyến mãi giữ chân & Mã ưu đãi)
+
+### A. Introductory Offers — Free Trial / New User Pricing (Ưu đãi cho người mới)
+
+When `fetchOfferings()` runs, the SDK automatically queries Apple/RevenueCat (`checkTrialOrIntroDiscountEligibility`) to check whether the user is a **new subscriber** eligible for a Free Trial or Introductory Price:
+(Khi gọi `fetchOfferings()`, package tự động kiểm tra xem Apple ID của user có phải **người mới** đủ điều kiện nhận Dùng thử miễn phí / Giá ưu đãi kỳ đầu hay không:)
+
+- **On `TNDefaultPaywallView` (Tự động trên Paywall mặc định)**:
+  - **Eligible (Đủ điều kiện — Người mới)**: Automatically displays the `FREE TRIAL` / `INTRO OFFER` badge, shows the trial/intro summary (e.g. `"3 Days Free Trial · Then $9.99"`), and updates the CTA button to **"Start Free Trial"** or **"Claim Intro Offer"**.
+  - **Ineligible (Không đủ điều kiện — Người cũ đã dùng thử)**: Automatically hides the trial text and displays the regular renewal price + **"Continue"** button.
+
+- **In Custom Paywall / Code (Kiểm tra thủ công trong Custom Paywall)**:
+```swift
+let sub = TNSubscriptionIOS.shared
+
+for package in sub.availablePackages {
+    // 1. Check if user is eligible for intro offer / free trial (Kiểm tra có đủ điều kiện người mới không)
+    if sub.isEligibleForIntroOffer(package: package) {
+        // 2. Get formatted summary, e.g. "3 Days Free Trial" or "$0.99 for 1 Month"
+        // (Lấy chuỗi mô tả ưu đãi đã format sẵn)
+        let summary = sub.introOfferSummary(for: package) ?? "Free Trial"
+        print("New user offer: \(summary)")
+    }
+}
+```
+
+### B. Promotional Offers — Win-back / Retention Offers (Ưu đãi cho người cũ / giữ chân)
+
+> Requires uploading your App Store Connect **In-App Purchase Key (`.p8`)** to RevenueCat Dashboard so RevenueCat can sign the promotional offer.
+> (Yêu cầu tải file khóa `.p8` từ App Store Connect lên RevenueCat Dashboard để ký xác thực ưu đãi.)
+
+```swift
+let sub = TNSubscriptionIOS.shared
+
+// 1. Check all promotional discounts configured on the package (Lấy danh sách discount của gói)
+let discounts = sub.promotionalDiscounts(for: package)
+
+if let promoDiscount = discounts.first {
+    // 2. Automatically sign via RevenueCat & purchase (Tự động ký qua RevenueCat và thanh toán)
+    sub.purchasePromotionalOffer(package: package, discount: promoDiscount) { result in
+        switch result {
+        case .success(let customerInfo):
+            print("Promotional offer purchased!")
+        case .failure(let error):
+            print("Error: \(error.localizedDescription)")
+        }
+    }
+}
+```
+
+### C. Offer Codes — App Store Redemption Sheet (Nhập mã ưu đãi)
+
+- **Built-in Paywall**: Shows a **"Redeem Code"** button in the footer by default (hide via `DefaultPaywallConfig(showRedeemCodeButton: false)`).
+- **Custom UI**: Call `TNSubscriptionIOS.shared.presentOfferCodeRedemption()` to open iOS's native code redemption sheet.
+
+---
+
 ## 5. Consumable Purchases (Mua consumable — coins, gems, credits)
 
 > For one-time purchases that add a quantity (e.g. coins, gems, credits).
@@ -834,6 +893,7 @@ request.applyTNIdentityHeaders(userId: currentUserId)
 | `entitlementState` | `EntitlementState` | `.unknown` → `.locked` → `.unlocked` |
 | `customerInfo` | `CustomerInfo?` | RevenueCat customer info |
 | `availablePackages` | `[Package]` | Packages from RevenueCat (Danh sách gói từ RevenueCat) |
+| `introEligibility` | `[String: IntroEligibilityStatus]` | Intro/Trial eligibility map per product ID (Trạng thái đủ điều kiện ưu đãi người mới theo product ID) |
 | `isLoadingOfferings` | `Bool` | Loading offerings (Đang load offerings) |
 | `isPurchasing` | `Bool` | Purchase in progress (Đang xử lý mua) |
 | `offeringsError` | `String?` | Error loading offerings (Lỗi khi load offerings) |
@@ -844,10 +904,16 @@ request.applyTNIdentityHeaders(userId: currentUserId)
 |---|---|
 | `hasEntitlement(_ id: String) → Bool` | Check specific entitlement (Kiểm tra entitlement cụ thể) |
 | `productIDs(for: String) → Set<String>` | Get configured product IDs (Lấy product IDs đã config) |
-| `fetchOfferings()` | Load offerings from RevenueCat (Load offerings từ RevenueCat) |
+| `fetchOfferings(offeringIdentifier:)` | Load offerings & check intro eligibility (Load offerings và kiểm tra điều kiện ưu đãi người mới) |
+| `isEligibleForIntroOffer(package:) → Bool` | Check if user is eligible for free trial / intro offer (Kiểm tra user có đủ điều kiện người mới không) |
+| `introOffer(for: Package) → StoreProductDiscount?` | Get intro discount only if user is eligible (Lấy thông tin ưu đãi nếu đủ điều kiện) |
+| `introOfferSummary(for: Package) → String?` | Human-readable intro offer text, e.g. `"3 Days Free Trial"` (Chuỗi mô tả ưu đãi người mới) |
+| `promotionalDiscounts(for: Package) → [StoreProductDiscount]` | Get promotional discounts for package (Lấy danh sách Promotional Offers của gói) |
+| `eligiblePromotionalOffers(for: Package) async → [PromotionalOffer]` | Fetch signed promotional offers from RevenueCat (Lấy danh sách PromotionalOffer đã ký) |
 | `purchase(package:completion:)` | Purchase a package (Mua gói) |
+| `purchasePromotionalOffer(package:discount:completion:)` | Sign & purchase a Promotional Offer (Ký và mua gói với Promotional Offer) |
 | `restorePurchases(completion:)` | Restore purchases (Khôi phục mua hàng) |
-| `presentOfferCodeRedemption(completion:)` | Present iOS native Offer Code Redemption sheet (Mở sheet nhập mã ưu đãi gốc của iOS) |
+| `presentOfferCodeRedemption()` | Present iOS native Offer Code Redemption sheet (Mở sheet nhập mã ưu đãi gốc của iOS) |
 | `checkSubscriptionStatus()` | Re-check entitlement status (Kiểm tra lại trạng thái) |
 | `currentPlanProductID → String?` | First active plan's product ID (Product ID của plan active đầu tiên) |
 | `currentProductID(for:) → String?` | Product ID for specific entitlement (Product ID cho entitlement cụ thể) |

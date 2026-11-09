@@ -342,6 +342,7 @@ public struct TNDefaultPaywallView: View {
         let isSelected = selectedPackage?.identifier == package.identifier
         let isCurrent = manager.currentPlanProductID == package.storeProduct.productIdentifier
         let isRecommended = TNSubscriptionIOS.isRecommendedPackage(package)
+        let eligibleIntro = manager.introOffer(for: package)
         
         return Button {
             selectedPackage = package
@@ -361,6 +362,17 @@ public struct TNDefaultPaywallView: View {
                                 .background(config.accentColor)
                                 .clipShape(Capsule())
                         }
+                        if let intro = eligibleIntro {
+                            Text(intro.paymentMode == .freeTrial
+                                 ? NSLocalizedString("FREE TRIAL", comment: "")
+                                 : NSLocalizedString("INTRO OFFER", comment: ""))
+                                .font(.system(size: 9, weight: .bold))
+                                .foregroundStyle(config.accentColor)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(config.accentColor.opacity(0.18))
+                                .clipShape(Capsule())
+                        }
                         if isCurrent {
                             Text(NSLocalizedString("CURRENT", comment: ""))
                                 .font(.system(size: 9, weight: .bold))
@@ -373,7 +385,7 @@ public struct TNDefaultPaywallView: View {
                     }
                     Text(planSubtitle(for: package))
                         .font(.caption)
-                        .foregroundStyle(config.textSecondaryColor)
+                        .foregroundStyle(eligibleIntro != nil ? config.accentColor : config.textSecondaryColor)
                 }
                 Spacer()
                 Text(package.storeProduct.localizedPriceString)
@@ -423,6 +435,13 @@ public struct TNDefaultPaywallView: View {
     private var purchaseButtonTitle: String {
         if isTargetUnlocked {
             return NSLocalizedString("Switch Plan", comment: "")
+        }
+        if let selected = selectedPackage, let intro = manager.introOffer(for: selected) {
+            if intro.paymentMode == .freeTrial {
+                return NSLocalizedString("Start Free Trial", comment: "")
+            } else {
+                return NSLocalizedString("Claim Intro Offer", comment: "")
+            }
         }
         return NSLocalizedString("Continue", comment: "")
     }
@@ -499,6 +518,13 @@ public struct TNDefaultPaywallView: View {
     private func planSubtitle(for package: Package) -> String {
         if package.packageType == .lifetime {
             return NSLocalizedString("One-time purchase · Forever access", comment: "")
+        }
+        if let introSummary = manager.introOfferSummary(for: package) {
+            return String(
+                format: NSLocalizedString("%@ · Then %@", comment: ""),
+                introSummary,
+                package.storeProduct.localizedPriceString
+            )
         }
         return NSLocalizedString("Auto-renewable subscription", comment: "")
     }

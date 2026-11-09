@@ -1,4 +1,5 @@
 import XCTest
+import RevenueCat
 @testable import TNSubscriptionIOS
 
 final class TNSubscriptionIOSTests: XCTestCase {
@@ -111,5 +112,21 @@ final class TNSubscriptionIOSTests: XCTestCase {
         XCTAssertEqual(paywallView.config.offeringIdentifier, "sale")
         XCTAssertEqual(paywallView.config.entitlementId, "Sale")
         XCTAssertTrue(paywallView.config.showRedeemCodeButton)
+    }
+    
+    func testFormatSubscriptionPeriodAndIntroEligibilityDefault() {
+        XCTAssertEqual(
+            TNSubscriptionIOS.formatSubscriptionPeriod(RevenueCat.SubscriptionPeriod(value: 3, unit: .day), numberOfPeriods: 1),
+            "3 Days"
+        )
+        XCTAssertEqual(
+            TNSubscriptionIOS.formatSubscriptionPeriod(RevenueCat.SubscriptionPeriod(value: 1, unit: .week), numberOfPeriods: 1),
+            "1 Week"
+        )
+        XCTAssertEqual(
+            TNSubscriptionIOS.formatSubscriptionPeriod(RevenueCat.SubscriptionPeriod(value: 1, unit: .month), numberOfPeriods: 3),
+            "3 Months"
+        )
+        XCTAssertFalse(TNSubscriptionIOS.shared?.isEligibleForIntroOffer(productID: "com.test.unknown") ?? false)
     }
 }

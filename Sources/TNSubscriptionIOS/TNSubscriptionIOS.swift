@@ -154,6 +154,8 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     @Published public var activeEntitlements: Set<String> = []
     
     @Published public var availablePackages: [Package] = []
+    /// Introductory offer / free trial eligibility keyed by StoreKit `productIdentifier`.
+    @Published public private(set) var introEligibility: [String: IntroEligibilityStatus] = [:]
     @Published public var isLoadingOfferings = false
     @Published public var isPurchasing = false
     @Published public var offeringsError: String?
@@ -623,15 +625,167 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
                 targetOffering = offerings.current
             }
             let packages = targetOffering?.availablePackages ?? []
-            availablePackages = packages.sorted {
+            let sorted = packages.sorted {
                 Self.packageSortOrder($0) < Self.packageSortOrder($1)
             }
-            if availablePackages.isEmpty {
+            availablePackages = sorted
+            if sorted.isEmpty {
                 offeringsError = NSLocalizedString("No subscription plans are available right now. Please try again later.", comment: "")
+            } else {
+                await checkIntroEligibility(for: sorted)
             }
         } catch {
             offeringsError = error.localizedDescription
             availablePackages = []
+        }
+    }
+    
+    // MARK: - Introductory Offers (New Subscribers) & Promotional Offers (Existing/Lapsed Subscribers)
+    
+    /// Checks trial or introductory discount eligibility for the given packages and updates `introEligibility`.
+    @MainActor
+    @discardableResult
+    public func checkIntroEligibility(for packages: [Package]? = nil) async -> [String: IntroEligibilityStatus] {
+        guard Purchases.isConfigured else { return [:] }
+        let targetPackages = packages ?? availablePackages
+        let productIDs = targetPackages.map(\.storeProduct.productIdentifier)
+        guard !productIDs.isEmpty else { return [:] }
+        
+        let eligibilityMap = await Purchases.shared.checkTrialOrIntroDiscountEligibility(productIdentifiers: productIDs)
+        var statusMap = self.introEligibility
+        for (productID, eligibility) in eligibilityMap {
+            statusMap[productID] = eligibility.status
+        }
+        self.introEligibility = statusMap
+        return statusMap
+    }
+    
+    /// Returns `true` if the user is a new subscriber eligible for the package's introductory offer or free trial.
+    /// (Kiểm tra xem người dùng có đủ điều kiện nhận ưu đãi người mới / dùng thử miễn phí cho gói này không.)
+    public func isEligibleForIntroOffer(package: Package) -> Bool {
+        guard package.storeProduct.introductoryDiscount != nil else { return false }
+        let productID = package.storeProduct.productIdentifier
+        return introEligibility[productID] == .eligible
+    }
+    
+    /// Returns `true` if the user is eligible for the introductory offer of a specific StoreKit Product ID.
+    public func isEligibleForIntroOffer(productID: String) -> Bool {
+        introEligibility[productID] == .eligible
+    }
+    
+    /// Returns the `StoreProductDiscount` for the package's introductory offer **only** if the user is eligible.
+    /// Returns `nil` if no intro offer exists or if the user has already used their trial/intro offer.
+    public func introOffer(for package: Package) -> StoreProductDiscount? {
+        guard isEligibleForIntroOffer(package: package) else { return nil }
+        return package.storeProduct.introductoryDiscount
+    }
+    
+    /// Returns a human-readable summary of the introductory offer if the user is eligible
+    /// (e.g. `"3-Day Free Trial"` or `"$0.99 for 1 Month"`), or `nil` if not eligible.
+    public func introOfferSummary(for package: Package) -> String? {
+        guard let discount = introOffer(for: package) else { return nil }
+        let periodText = Self.formatSubscriptionPeriod(discount.subscriptionPeriod, numberOfPeriods: discount.numberOfPeriods)
+        switch discount.paymentMode {
+        case .freeTrial:
+            return String(format: NSLocalizedString("%@ Free Trial", comment: ""), periodText)
+        case .payAsYouGo, .payUpFront:
+            return String(format: NSLocalizedString("%@ for %@", comment: ""), discount.localizedPriceString, periodText)
+        @unknown default:
+            return nil
+        }
+    }
+    
+    /// Formats a RevenueCat `SubscriptionPeriod` into a localized string (e.g. `"3 Days"`, `"1 Week"`, `"1 Month"`).
+    public static func formatSubscriptionPeriod(_ period: RevenueCat.SubscriptionPeriod, numberOfPeriods: Int = 1) -> String {
+        let totalUnits = max(1, period.value * max(1, numberOfPeriods))
+        switch period.unit {
+        case .day:
+            return totalUnits == 1
+                ? NSLocalizedString("1 Day", comment: "")
+                : String(format: NSLocalizedString("%d Days", comment: ""), totalUnits)
+        case .week:
+            return totalUnits == 1
+                ? NSLocalizedString("1 Week", comment: "")
+                : String(format: NSLocalizedString("%d Weeks", comment: ""), totalUnits)
+        case .month:
+            return totalUnits == 1
+                ? NSLocalizedString("1 Month", comment: "")
+                : String(format: NSLocalizedString("%d Months", comment: ""), totalUnits)
+        case .year:
+            return totalUnits == 1
+                ? NSLocalizedString("1 Year", comment: "")
+                : String(format: NSLocalizedString("%d Years", comment: ""), totalUnits)
+        @unknown default:
+            return "\(totalUnits)"
+        }
+    }
+    
+    /// Returns all promotional discounts configured in App Store Connect for the given package.
+    public func promotionalDiscounts(for package: Package) -> [StoreProductDiscount] {
+        package.storeProduct.discounts
+    }
+    
+    /// Fetches all signed `PromotionalOffer` objects that the current user is eligible to redeem for the given package.
+    /// Requires an In-App Purchase Key (`.p8`) uploaded to the RevenueCat Dashboard.
+    @MainActor
+    public func eligiblePromotionalOffers(for package: Package) async -> [PromotionalOffer] {
+        guard Purchases.isConfigured else { return [] }
+        return await Purchases.shared.eligiblePromotionalOffers(forProduct: package.storeProduct)
+    }
+    
+    /// Purchases a package with a signed `PromotionalOffer` using Swift Concurrency (`async/await`).
+    @MainActor
+    @discardableResult
+    public func purchaseAsync(package: Package, promotionalOffer: PromotionalOffer) async throws -> CustomerInfo {
+        isPurchasing = true
+        defer { isPurchasing = false }
+        
+        let result = try await Purchases.shared.purchase(package: package, promotionalOffer: promotionalOffer)
+        forceUpdateState(from: result.customerInfo)
+        if result.userCancelled {
+            throw PurchaseFlowError.userCancelled
+        }
+        if TNInAppCurrencyManager.isInitialized {
+            TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
+        }
+        return result.customerInfo
+    }
+    
+    /// Automatically signs a `StoreProductDiscount` via RevenueCat and purchases the package with that promotional offer.
+    @MainActor
+    @discardableResult
+    public func purchasePromotionalOfferAsync(package: Package, discount: StoreProductDiscount) async throws -> CustomerInfo {
+        isPurchasing = true
+        defer { isPurchasing = false }
+        
+        let signedOffer = try await Purchases.shared.promotionalOffer(
+            forProductDiscount: discount,
+            product: package.storeProduct
+        )
+        let result = try await Purchases.shared.purchase(package: package, promotionalOffer: signedOffer)
+        forceUpdateState(from: result.customerInfo)
+        if result.userCancelled {
+            throw PurchaseFlowError.userCancelled
+        }
+        if TNInAppCurrencyManager.isInitialized {
+            TNInAppCurrencyManager.shared.handlePurchaseOrRestoreSuccess()
+        }
+        return result.customerInfo
+    }
+    
+    /// Purchases a package with a `StoreProductDiscount` (Promotional Offer), calling back on `@MainActor`.
+    public func purchasePromotionalOffer(
+        package: Package,
+        discount: StoreProductDiscount,
+        completion: @escaping (Result<CustomerInfo, Error>) -> Void
+    ) {
+        Task { @MainActor in
+            do {
+                let info = try await purchasePromotionalOfferAsync(package: package, discount: discount)
+                completion(.success(info))
+            } catch {
+                completion(.failure(error))
+            }
         }
     }
     
