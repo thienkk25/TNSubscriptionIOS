@@ -199,9 +199,7 @@ public final class TNConsumableManager: ObservableObject {
             await processTransaction(transaction)
         }
         
-        #if DEBUG
-        print("[TNConsumable] Unfinished transaction recovery complete. (Khôi phục giao dịch chưa hoàn thành xong.)")
-        #endif
+        TNLog.debug("[Consumable] Unfinished transaction recovery complete.")
     }
     
     /// Processes a single transaction: credits balance (with dedup) and finishes it.
@@ -210,14 +208,16 @@ public final class TNConsumableManager: ObservableObject {
         // Only process consumables that we configured
         // (Chỉ xử lý consumable đã config)
         guard let product = self.products.first(where: { $0.id == transaction.productID }) else {
+            TNLog.verbose("[Consumable] Ignoring transaction for \(transaction.productID): not a configured consumable.")
             return
         }
-        
+
         // Dedup: skip if this transaction was already credited
         // (Chống trùng: bỏ qua nếu giao dịch này đã được cộng tiền rồi)
         if isTransactionProcessed(transaction.id) {
             // Already processed, just finish
             // (Đã xử lý rồi, chỉ finish)
+            TNLog.debug("[Consumable] Transaction \(transaction.id) for \(transaction.productID) was already credited; finishing it only.")
             await transaction.finish()
             return
         }
@@ -233,9 +233,7 @@ public final class TNConsumableManager: ObservableObject {
         // Finish transaction (Kết thúc giao dịch)
         await transaction.finish()
         
-        #if DEBUG
-        print("[TNConsumable] Recovered transaction \(transaction.id): +\(product.reward) \(product.currency)")
-        #endif
+        TNLog.info("[Consumable] Credited transaction \(transaction.id): +\(product.reward) \(product.currency) for \(product.id)")
     }
     
     // MARK: - Load Products
@@ -263,10 +261,24 @@ public final class TNConsumableManager: ObservableObject {
             }
             if self.storeProducts.isEmpty {
                 loadError = NSLocalizedString("No products available.", comment: "")
+                TNLog.error("""
+                [Consumable] StoreKit returned 0 products for \(productIDs.sorted()). Consumables are bought through \
+                raw StoreKit 2, NOT through RevenueCat, so the RevenueCat API key is irrelevant here — a 'test_' \
+                Test Store key cannot supply these products. StoreKit needs either a .storekit configuration file \
+                attached to the running scheme, or these product IDs live on App Store Connect with the app run on \
+                a real device signed in to a Sandbox Apple ID.
+                """)
+            } else {
+                let missing = productIDs.subtracting(self.storeProducts.map(\.id))
+                if !missing.isEmpty {
+                    TNLog.warn("[Consumable] StoreKit did not return \(missing.sorted()); those packs cannot be purchased.")
+                }
+                TNLog.info("[Consumable] Loaded \(self.storeProducts.count) product(s): \(self.storeProducts.map(\.id))")
             }
         } catch {
             loadError = error.localizedDescription
             storeProducts = []
+            TNLog.error("[Consumable] Loading products FAILED: \(error.localizedDescription)")
         }
     }
     
@@ -277,33 +289,52 @@ public final class TNConsumableManager: ObservableObject {
     @discardableResult
     public func purchaseAsync(productId: String) async throws -> Int {
         guard let config = products.first(where: { $0.id == productId }) else {
+            TNLog.error("[Consumable] '\(productId)' was never passed to TNConsumableManager.configure(products:). Configured: \(products.map(\.id))")
             throw ConsumableError.productNotConfigured(productId)
         }
-        
+
         guard let storeProduct = storeProducts.first(where: { $0.id == productId }) else {
+            TNLog.error("""
+            [Consumable] '\(productId)' is configured but StoreKit never returned it, so there is nothing to buy. \
+            Call loadProducts() first, then check the product exists in the .storekit configuration file attached \
+            to the scheme, or on App Store Connect. Loaded so far: \(storeProducts.map(\.id)). \
+            Last load error: \(loadError ?? "none")
+            """)
             throw ConsumableError.productNotLoaded(productId)
         }
-        
+
         isPurchasing = true
         defer { isPurchasing = false }
-        
-        let result = try await storeProduct.purchase()
-        
+
+        TNLog.info("[Consumable] Purchasing \(productId)…")
+
+        let result: Product.PurchaseResult
+        do {
+            result = try await storeProduct.purchase()
+        } catch {
+            TNLog.error("[Consumable] Purchase of \(productId) FAILED: \(error.localizedDescription)")
+            throw error
+        }
+
         switch result {
         case .success(let verification):
             guard case .verified(let transaction) = verification else {
+                TNLog.error("[Consumable] Purchase of \(productId) returned an UNVERIFIED transaction; no balance credited.")
                 throw ConsumableError.verificationFailed
             }
             await processTransaction(transaction)
             return config.reward
-            
+
         case .userCancelled:
+            TNLog.info("[Consumable] Purchase of \(productId) cancelled by the user.")
             throw ConsumableError.userCancelled
-            
+
         case .pending:
+            TNLog.info("[Consumable] Purchase of \(productId) is pending approval (e.g. Ask to Buy); the balance is credited once approved.")
             throw ConsumableError.purchasePending
-            
+
         @unknown default:
+            TNLog.error("[Consumable] Purchase of \(productId) returned an unknown StoreKit result.")
             throw ConsumableError.unknown
         }
     }
@@ -372,9 +403,7 @@ public final class TNConsumableManager: ObservableObject {
         balances[currency] = safeBalance
         persistBalance(safeBalance, for: currency)
         
-        #if DEBUG
-        print("[TNConsumable] +\(amount) \(currency) → balance: \(safeBalance)")
-        #endif
+        TNLog.debug("[Consumable] +\(amount) \(currency) → balance: \(safeBalance)")
     }
     
     /// Deducts a positive amount from a currency balance. Returns `false` if amount <= 0 or insufficient balance.
@@ -397,9 +426,7 @@ public final class TNConsumableManager: ObservableObject {
         balances[currency] = newBalance
         persistBalance(newBalance, for: currency)
         
-        #if DEBUG
-        print("[TNConsumable] -\(amount) \(currency) → balance: \(newBalance)")
-        #endif
+        TNLog.debug("[Consumable] -\(amount) \(currency) → balance: \(newBalance)")
         
         return true
     }

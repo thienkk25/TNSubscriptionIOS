@@ -136,27 +136,31 @@ public final class TNInAppCurrencyManager: ObservableObject {
     @MainActor
     public func fetchCurrenciesAsync(forceRefresh: Bool = false) async throws -> VirtualCurrencies {
         guard Purchases.isConfigured else {
+            TNLog.error("[Currency] fetchCurrencies failed: RevenueCat is not configured.")
             throw CurrencyError.sdkNotConfigured
         }
-        
+
         isLoading = true
         error = nil
         defer { isLoading = false }
-        
+
         if forceRefresh {
             Purchases.shared.invalidateVirtualCurrenciesCache()
         }
-        
+
         do {
             let result = try await Purchases.shared.virtualCurrencies()
             self.apply(currencies: result)
             self.lastUpdated = Date()
+            TNLog.debug("[Currency] Fetched balances: \(self.balances)")
             return result
         } catch {
             self.error = error.localizedDescription
+            TNLog.error("[Currency] Fetching virtual currencies FAILED: \(error.localizedDescription)")
             // Fallback to cached data if network failed
             if let cached = Purchases.shared.cachedVirtualCurrencies {
                 self.apply(currencies: cached)
+                TNLog.warn("[Currency] Falling back to cached virtual currency balances.")
             }
             throw error
         }
@@ -261,6 +265,7 @@ public final class TNInAppCurrencyManager: ObservableObject {
             guard success else {
                 let err = CurrencyError.spendFailed("Server rejected currency deduction transaction.")
                 self.error = err.localizedDescription
+                TNLog.error("[Currency] Spend of \(amount) \(code) rejected by the custom spend handler.")
                 throw err
             }
             let freshCurrencies = try await self.fetchCurrenciesAsync(forceRefresh: true)
@@ -386,6 +391,7 @@ public final class TNInAppCurrencyManager: ObservableObject {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 500
             let err = CurrencyError.spendFailed("HTTP status \(statusCode)")
             self.error = err.localizedDescription
+            TNLog.error("[Currency] Backend spend request failed with HTTP \(statusCode).")
             throw err
         }
         
@@ -519,6 +525,7 @@ public final class TNInAppCurrencyManager: ObservableObject {
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 500
             let err = CurrencyError.spendFailed("HTTP status \(statusCode)")
             self.error = err.localizedDescription
+            TNLog.error("[Currency] Backend spend request failed with HTTP \(statusCode).")
             throw err
         }
         

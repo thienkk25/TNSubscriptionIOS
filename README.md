@@ -6,6 +6,7 @@ A reusable Swift Package for iOS subscription management powered by RevenueCat. 
 - **Multiple entitlements** support (Hỗ trợ **nhiều entitlements**)
 - **RevenueCat In-App Currencies** support (Hỗ trợ **tiền tệ ảo/coins/gems/credits** đồng bộ Cloud RevenueCat)
 - Works with both **UIKit** and **SwiftUI** (Hoạt động với cả **UIKit** và **SwiftUI**)
+- **Diagnostics**: log levels, a pluggable log handler, API key validation and readable failure reasons (**Chẩn đoán**: mức log, log handler tùy biến, validate API key và lý do lỗi rõ ràng)
 
 ---
 
@@ -866,14 +867,124 @@ request.applyTNIdentityHeaders(userId: currentUserId)
 
 ---
 
+## 8. Diagnostics & Logging (Chẩn đoán & Log)
+
+When a purchase succeeds but nothing unlocks, or the paywall shows no plans, this is where you look first.
+(Khi mua xong mà không mở khóa, hoặc paywall không có gói nào, hãy xem ở đây trước.)
+
+### Log Levels (Các mức log)
+
+| Level | What you get (Nội dung) |
+|---|---|
+| `.verbose` | Every step, including each StoreKit transaction inspected, plus RevenueCat's own SDK logs |
+| `.debug` | Entitlement resolution details — which source won, what resolved |
+| `.info` | **Default in DEBUG.** Configuration, unlocks, purchases, restores |
+| `.warn` | Misconfiguration and recoverable fallbacks |
+| `.error` | **Default in Release.** Failures only |
+| `.none` | Silent |
+
+### Setting the Level (Đặt mức log)
+
+```swift
+TNSubscriptionIOS.configure(config: TNSubscriptionConfig(
+    apiKey: "appl_YOUR_KEY",
+    entitlements: [TNEntitlement(id: "Premium", productIDs: ["com.app.weekly"])],
+    logLevel: .verbose    // ← troubleshooting (gỡ lỗi)
+))
+
+// Or change it at runtime, e.g. from a hidden debug menu
+// (Hoặc đổi lúc chạy, ví dụ từ debug menu ẩn)
+TNSubscriptionIOS.logLevel = .verbose
+```
+
+Setting `logLevel` also sets `Purchases.logLevel`, so RevenueCat reports exactly which product IDs it failed to fetch and why.
+(Đặt `logLevel` cũng set luôn `Purchases.logLevel`, nên RevenueCat sẽ in rõ product ID nào fetch lỗi và vì sao.)
+
+### Routing Logs to Your Own Stack (Đưa log vào hệ thống của bạn)
+
+Set `logHandler` **before** `configure(...)` to also capture API key validation warnings. It receives TNSubscriptionIOS **and** RevenueCat SDK lines (the latter prefixed `[RevenueCat]`).
+(Set `logHandler` **trước** `configure(...)` để bắt được cả cảnh báo validate API key.)
+
+```swift
+TNSubscriptionIOS.logHandler = { level, message in
+    switch level {
+    case .error, .warn:
+        Crashlytics.crashlytics().log("[IAP][\(level)] \(message)")
+    default:
+        logger.debug("[IAP] \(message)")
+    }
+}
+```
+
+When no handler is installed, logs go to `print`.
+(Không set handler thì log in ra `print`.)
+
+### Reading Failures in Code (Đọc lỗi trong code)
+
+Two published properties cover the two halves of an IAP failure:
+(Hai property published phủ hai nửa của một lỗi IAP:)
+
+| Property | Answers (Trả lời câu hỏi) |
+|---|---|
+| `offeringsError` | Why no plan could be **displayed** (Vì sao không hiện được gói nào) |
+| `entitlementError` | Why a purchase could not be **verified** (Vì sao mua rồi mà không xác thực được) |
+
+```swift
+if let error = sub.offeringsError {
+    // Products never loaded — show a retry, not a paywall with fake prices
+    // (Product không load được — hiện nút thử lại, đừng hiện paywall với giá giả)
+    showRetry(message: error)
+}
+
+if let error = sub.entitlementError {
+    // The CHECK failed; this is NOT the same as the user being a non-subscriber
+    // (Việc KIỂM TRA bị lỗi; khác với việc user chưa mua)
+    showRetry(message: error)
+}
+```
+
+> `entitlementError == nil` does **not** mean the user is premium — it only means the check completed. Read `isPremium` for entitlement status.
+> (`entitlementError == nil` **không** có nghĩa là user đã premium — chỉ nghĩa là việc kiểm tra đã xong. Đọc `isPremium` để biết trạng thái.)
+
+### API Key Validation (Kiểm tra API key)
+
+`configure(...)` inspects the key prefix and reports the consequences:
+(`configure(...)` kiểm tra prefix của key và cảnh báo hệ quả:)
+
+| Prefix | Behaviour (Hành vi) |
+|---|---|
+| `appl_` | App Store. Products come from StoreKit — App Store Connect, or a `.storekit` file when the scheme uses one |
+| `test_` | **RevenueCat Test Store.** Purchases are simulated and bypass StoreKit entirely; intro/promotional offers are not testable. Logs a warning in DEBUG, and an **error in Release** — the RevenueCat SDK deliberately crashes on a Test Store key in release builds (iOS SDK 5.89.0+) and App Review rejects such builds |
+| anything else | Warns about an unrecognized prefix |
+
+> Consumables bought through `TNConsumableManager` use **raw StoreKit 2**, not RevenueCat. The API key is irrelevant to them — a `test_` key cannot supply consumable products. They always need a `.storekit` configuration file or real App Store Connect products.
+> (Consumable mua qua `TNConsumableManager` dùng **StoreKit 2 gốc**, không qua RevenueCat. API key không liên quan — key `test_` không cấp được product consumable. Luôn cần file `.storekit` hoặc product thật trên App Store Connect.)
+
+Use build configurations to keep the two apart:
+(Dùng build configuration để tách hai key:)
+
+```swift
+#if DEBUG
+let rcKey = "test_YOUR_TEST_STORE_KEY"
+#else
+let rcKey = "appl_YOUR_APP_STORE_KEY"
+#endif
+```
+
+---
+
 ## API Reference (Tham chiếu API)
 
 ### `TNSubscriptionConfig`
 
 | Initializer | Parameters |
 |---|---|
-| Multi-entitlement (Nhiều entitlements) | `apiKey`, `entitlements: [TNEntitlement]`, `isIAPEnabled` |
-| Single-entitlement (1 entitlement) | `apiKey`, `entitlementId`, `productIDs: Set<String>`, `isIAPEnabled` |
+| Multi-entitlement (Nhiều entitlements) | `apiKey`, `entitlements: [TNEntitlement]`, `isIAPEnabled`, `enableBackendIdentitySync`, `logLevel` |
+| Single-entitlement (1 entitlement) | `apiKey`, `entitlementId`, `productIDs: Set<String>`, `isIAPEnabled`, `enableBackendIdentitySync`, `logLevel` |
+
+### `TNLogLevel`
+
+`.verbose` · `.debug` · `.info` · `.warn` · `.error` · `.none` — ordered, lowest to highest. Defaults to `.info` in DEBUG and `.error` in Release via `TNLogLevel.default`. See [Diagnostics & Logging](#8-diagnostics--logging-chẩn-đoán--log).
 
 ### `TNEntitlement`
 
@@ -896,7 +1007,8 @@ request.applyTNIdentityHeaders(userId: currentUserId)
 | `introEligibility` | `[String: IntroEligibilityStatus]` | Intro/Trial eligibility map per product ID (Trạng thái đủ điều kiện ưu đãi người mới theo product ID) |
 | `isLoadingOfferings` | `Bool` | Loading offerings (Đang load offerings) |
 | `isPurchasing` | `Bool` | Purchase in progress (Đang xử lý mua) |
-| `offeringsError` | `String?` | Error loading offerings (Lỗi khi load offerings) |
+| `offeringsError` | `String?` | Why no plan could be **displayed** (Vì sao không hiện được gói nào) |
+| `entitlementError` | `String?` | Why a purchase could not be **verified**; `nil` means the check completed, **not** that the user is premium (Vì sao mua rồi mà không xác thực được) |
 
 #### Methods (Phương thức)
 
@@ -925,6 +1037,8 @@ request.applyTNIdentityHeaders(userId: currentUserId)
 
 | API | Description (Mô tả) |
 |---|---|
+| `TNSubscriptionIOS.logLevel` | Get/set diagnostic verbosity; also sets `Purchases.logLevel` (Đặt mức log, set luôn cho RevenueCat) |
+| `TNSubscriptionIOS.logHandler` | Route TNSubscriptionIOS + RevenueCat logs into your own stack (Đưa log vào hệ thống của bạn) |
 | `TNSubscriptionIOS.clientId` | Persistent UUID for API headers (UUID persistent cho API headers) |
 | `TNSubscriptionIOS.displayName(forProductID:)` | Display name from product ID (Tên hiển thị từ product ID) |
 | `TNSubscriptionIOS.isRecommendedPackage(_:)` | Is recommended package, yearly (Có phải gói recommended, yearly) |
