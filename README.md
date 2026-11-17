@@ -8,6 +8,22 @@ A reusable Swift Package for iOS subscription management powered by RevenueCat. 
 - Works with both **UIKit** and **SwiftUI** (Hoạt động với cả **UIKit** và **SwiftUI**)
 - **Diagnostics**: log levels, a pluggable log handler, API key validation and readable failure reasons (**Chẩn đoán**: mức log, log handler tùy biến, validate API key và lý do lỗi rõ ràng)
 
+> **Don't want the RevenueCat dependency?** This package ships a second target,
+> `TNSubscriptionCore`: **pure Apple StoreKit 2**, no API key, zero dependencies.
+> See [CORE.md](CORE.md) for the type mapping, what you gain and give up, and how to migrate.
+> (**Không muốn phụ thuộc RevenueCat?** Package này có target thứ hai, `TNSubscriptionCore`:
+> **thuần Apple StoreKit 2**, không API key, không dependency nào. Xem [CORE.md](CORE.md)
+> để biết bản đồ chuyển đổi, được gì / mất gì, và cách migrate.)
+
+| | `TNSubscriptionIOS` | `TNSubscriptionCore` |
+|---|---|---|
+| Dependency | RevenueCat | *none (không có)* |
+| API key | required (bắt buộc) | none (không cần) |
+| Cross-platform entitlements (Quyền lợi đa nền tảng) | ✅ | ❌ Apple ID only |
+| Offerings | dashboard | declared in code (khai báo trong code) |
+| Virtual currency | RevenueCat server | local / your server (cục bộ / server bạn) |
+| Works offline (Hoạt động offline) | cache | ✅ native (gốc) |
+
 ---
 
 ## Requirements (Yêu cầu)

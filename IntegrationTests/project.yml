@@ -1,0 +1,87 @@
+# XcodeGen spec for the StoreKit integration test host.
+# (Spec XcodeGen cho host app chạy integration test StoreKit.)
+#
+# Why this exists: StoreKit refuses to serve products to a SwiftPM test runner, because
+# `Bundle.main` there is the xctest binary and not an app. SKTestSession loads the .storekit
+# file fine, but `Product.products(for:)` comes back empty. A real app target as TEST_HOST
+# fixes it. (Vì sao cần: StoreKit không trả sản phẩm cho test runner của SwiftPM, do
+# `Bundle.main` khi đó là binary xctest chứ không phải một app. SKTestSession vẫn nạp được file
+# .storekit, nhưng `Product.products(for:)` trả về rỗng. Dùng một app target thật làm TEST_HOST
+# là cách giải quyết.)
+#
+# Regenerate with:  cd IntegrationTests && xcodegen generate
+# (Tạo lại bằng:    cd IntegrationTests && xcodegen generate)
+
+name: TNCoreIntegration
+
+options:
+  bundleIdPrefix: com.tnsubscription.core
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+  generateEmptyDirectories: false
+
+packages:
+  TNSubscriptionIOS:
+    path: ".."
+
+targets:
+  # A deliberately empty app. It exists only to give StoreKit a bundle to attach to.
+  # (Một app rỗng có chủ đích. Nó tồn tại chỉ để StoreKit có một bundle để gắn vào.)
+  TNCoreTestHost:
+    type: application
+    platform: iOS
+    sources:
+      - path: TNCoreTestHost
+    info:
+      path: TNCoreTestHost/Info.plist
+      properties:
+        CFBundleDisplayName: TNCore Test Host
+        UILaunchScreen: {}
+        UIApplicationSupportsMultipleScenes: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.tnsubscription.core.testhost
+        GENERATE_INFOPLIST_FILE: NO
+        SWIFT_VERSION: "5.9"
+        TARGETED_DEVICE_FAMILY: "1,2"
+    dependencies:
+      - package: TNSubscriptionIOS
+        product: TNSubscriptionCore
+
+  TNCoreIntegrationTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: TNCoreIntegrationTests
+      # The .storekit file is bundled as a test resource and loaded by URL, rather than set
+      # on the scheme: that way `xcodebuild test` works with no per-machine configuration.
+      # (File .storekit được đóng vào test bundle và nạp theo URL, thay vì đặt ở scheme: nhờ
+      # vậy `xcodebuild test` chạy được mà không cần cấu hình riêng trên từng máy.)
+      - path: Resources/TNCoreTests.storekit
+        buildPhase: resources
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.tnsubscription.core.integrationtests
+        # Testability is what makes `@testable import` work, and with it the
+        # `resetForTesting()` hooks the suite needs between tests.
+        ENABLE_TESTABILITY: YES
+    dependencies:
+      - target: TNCoreTestHost
+      - package: TNSubscriptionIOS
+        product: TNSubscriptionCore
+
+schemes:
+  TNCoreIntegrationTests:
+    build:
+      targets:
+        TNCoreTestHost: all
+        TNCoreIntegrationTests: [test]
+    test:
+      gatherCoverageData: false
+      targets:
+        - TNCoreIntegrationTests
+    run:
+      config: Debug
