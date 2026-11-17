@@ -35,10 +35,13 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-spm-
 
+      # NOTE: TNSubscriptionIOS-Package, not TNSubscriptionIOS. The per-product schemes
+      # (TNSubscriptionIOS, TNSubscriptionCore) have no test action; only the whole-package
+      # scheme does, and it runs both test targets.
       - name: Resolve Package Dependencies
         run: |
           xcodebuild -resolvePackageDependencies \
-            -scheme TNSubscriptionIOS \
+            -scheme TNSubscriptionIOS-Package \
             -derivedDataPath DerivedData
 
       - name: Select Available iPhone Simulator
@@ -68,14 +71,14 @@ jobs:
         run: |
           if [ "${{ steps.simulator.outputs.has_device }}" = "true" ]; then
             xcodebuild test \
-              -scheme TNSubscriptionIOS \
+              -scheme TNSubscriptionIOS-Package \
               -derivedDataPath DerivedData \
               -destination "${{ steps.simulator.outputs.destination }}" \
               -enableCodeCoverage YES \
               CODE_SIGNING_ALLOWED=NO
           else
             xcodebuild build-for-testing \
-              -scheme TNSubscriptionIOS \
+              -scheme TNSubscriptionIOS-Package \
               -derivedDataPath DerivedData \
               -destination "${{ steps.simulator.outputs.destination }}" \
               CODE_SIGNING_ALLOWED=NO
