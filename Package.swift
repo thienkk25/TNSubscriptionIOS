@@ -20,9 +20,19 @@ let package = Package(
             name: "TNSubscriptionCore",
             targets: ["TNSubscriptionCore"]
         ),
+        // Adapty engine: StoreKit 2 + Adapty (access levels, placements, A/B-tested
+        // paywalls, server-signed promotional offers, cross-platform profiles).
+        .library(
+            name: "TNSubscriptionAdapty",
+            targets: ["TNSubscriptionAdapty"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/RevenueCat/purchases-ios-spm.git", from: "5.0.0"),
+        // Adapty 4.x declares swift-tools-version 6.2, so resolving this package now needs
+        // Xcode 26+. That costs shipping apps nothing: App Store Connect has only accepted
+        // Xcode 26 builds since 28 April 2026.
+        .package(url: "https://github.com/adaptyteam/AdaptySDK-iOS.git", from: "4.4.0"),
     ],
     targets: [
         .target(
@@ -41,6 +51,17 @@ let package = Package(
                 .process("PrivacyInfo.xcprivacy")
             ]
         ),
+        // NOTE: depends on Adapty only — never on RevenueCat, and never on the other two
+        // targets, so an app links exactly one billing SDK.
+        .target(
+            name: "TNSubscriptionAdapty",
+            dependencies: [
+                .product(name: "Adapty", package: "AdaptySDK-iOS"),
+            ],
+            resources: [
+                .process("PrivacyInfo.xcprivacy")
+            ]
+        ),
         .testTarget(
             name: "TNSubscriptionIOSTests",
             dependencies: ["TNSubscriptionIOS"]
@@ -51,6 +72,10 @@ let package = Package(
         .testTarget(
             name: "TNSubscriptionCoreTests",
             dependencies: ["TNSubscriptionCore"]
+        ),
+        .testTarget(
+            name: "TNSubscriptionAdaptyTests",
+            dependencies: ["TNSubscriptionAdapty"]
         ),
     ]
 )

@@ -1,36 +1,47 @@
 # TNSubscriptionIOS
 
-A reusable Swift Package for iOS subscription management powered by RevenueCat. (Gói Swift Package tái sử dụng cho quản lý subscription iOS, chạy trên RevenueCat.)
+A reusable Swift Package for iOS subscription management, with **three interchangeable billing engines** behind one API: RevenueCat, Adapty, or pure Apple StoreKit 2. (Gói Swift Package tái sử dụng cho quản lý subscription iOS, với **ba engine thanh toán thay thế được cho nhau** dưới cùng một API: RevenueCat, Adapty, hoặc thuần Apple StoreKit 2.)
 
+- **Pick the engine per app** — the public API is the same, so switching is mostly an `import` swap (**Chọn engine theo từng app** — API công khai giống nhau, nên đổi engine gần như chỉ là đổi `import`)
 - Built-in paywall UI **or** bring your own custom paywall (Paywall có sẵn **hoặc** tự custom hoàn toàn)
 - **Multiple entitlements** support (Hỗ trợ **nhiều entitlements**)
-- **RevenueCat In-App Currencies** support (Hỗ trợ **tiền tệ ảo/coins/gems/credits** đồng bộ Cloud RevenueCat)
+- **Introductory and promotional offers**, plus App Store offer codes; iOS 18 **win-back** offers in `TNSubscriptionCore` and `TNSubscriptionAdapty` (Ưu đãi **người mới và promotional**, cùng offer code của App Store; ưu đãi **win-back** của iOS 18 trong `TNSubscriptionCore` và `TNSubscriptionAdapty`)
+- **Consumables & virtual currency** — local coin/gem balances in every engine, plus cloud-synced RevenueCat In-App Currencies in `TNSubscriptionIOS` (**Consumable & tiền tệ ảo** — số dư coin/gem cục bộ ở mọi engine, cùng tiền tệ ảo đồng bộ cloud của RevenueCat trong `TNSubscriptionIOS`)
+- **No paywall flicker for paying users** — a warm-start cache unlocks them before the first network call (**Không nhoáng paywall với người đã trả tiền** — warm-start cache mở khoá trước cả lần gọi mạng đầu tiên)
 - Works with both **UIKit** and **SwiftUI** (Hoạt động với cả **UIKit** và **SwiftUI**)
 - **Diagnostics**: log levels, a pluggable log handler, API key validation and readable failure reasons (**Chẩn đoán**: mức log, log handler tùy biến, validate API key và lý do lỗi rõ ràng)
 
-> **Don't want the RevenueCat dependency?** This package ships a second target,
-> `TNSubscriptionCore`: **pure Apple StoreKit 2**, no API key, zero dependencies.
-> See [CORE.md](CORE.md) for the type mapping, what you gain and give up, and how to migrate.
-> (**Không muốn phụ thuộc RevenueCat?** Package này có target thứ hai, `TNSubscriptionCore`:
-> **thuần Apple StoreKit 2**, không API key, không dependency nào. Xem [CORE.md](CORE.md)
-> để biết bản đồ chuyển đổi, được gì / mất gì, và cách migrate.)
+### Choosing an engine (Chọn engine)
 
-| | `TNSubscriptionIOS` | `TNSubscriptionCore` |
-|---|---|---|
-| Dependency | RevenueCat | *none (không có)* |
-| API key | required (bắt buộc) | none (không cần) |
-| Cross-platform entitlements (Quyền lợi đa nền tảng) | ✅ | ❌ Apple ID only |
-| Offerings | dashboard | declared in code (khai báo trong code) |
-| Virtual currency | RevenueCat server | local / your server (cục bộ / server bạn) |
-| Works offline (Hoạt động offline) | cache | ✅ native (gốc) |
+Each engine is a separate library product that links exactly one billing SDK — or none.
+(Mỗi engine là một library product riêng, chỉ link đúng một SDK thanh toán — hoặc không SDK nào.)
+
+- **`TNSubscriptionIOS`** — RevenueCat. Documented in the rest of this README. (RevenueCat. Được mô tả trong phần còn lại của README này.)
+- **`TNSubscriptionAdapty`** — Adapty: access levels, A/B-tested placements, server-signed offers. See [ADAPTY.md](ADAPTY.md). (Adapty: access level, placement có A/B test, ưu đãi ký phía server. Xem [ADAPTY.md](ADAPTY.md).)
+- **`TNSubscriptionCore`** — pure Apple StoreKit 2, zero dependencies, no API key. See [CORE.md](CORE.md). (Thuần Apple StoreKit 2, không dependency, không API key. Xem [CORE.md](CORE.md).)
+
+| | `TNSubscriptionIOS` | `TNSubscriptionCore` | `TNSubscriptionAdapty` |
+|---|---|---|---|
+| Dependency | RevenueCat | *none (không có)* | Adapty 4.x |
+| API key | `appl_…` | none (không cần) | `public_live_…` |
+| Cross-platform entitlements (Quyền lợi đa nền tảng) | ✅ | ❌ Apple ID only | ✅ |
+| Offerings | dashboard | declared in code (khai báo trong code) | dashboard placements + A/B tests |
+| Promotional offer signing (Ký promotional offer) | RevenueCat server | your server (server bạn) | Adapty server |
+| Virtual currency | RevenueCat server | local / your server (cục bộ / server bạn) | local / your server |
+| Works offline (Hoạt động offline) | cache | ✅ native (gốc) | ✅ StoreKit fallback |
+
+> **Xcode 26+ is required to resolve this package** (Adapty 4.x needs Swift tools 6.2). App Store
+> Connect has required Xcode 26 builds since 28 April 2026. (**Cần Xcode 26+ để resolve package này**
+> (Adapty 4.x cần Swift tools 6.2). App Store Connect đã bắt buộc build bằng Xcode 26 từ 28/04/2026.)
 
 ---
 
 ## Requirements (Yêu cầu)
 
 - iOS 16.0+
-- Swift 5.9+
-- RevenueCat account & API key
+- Xcode 26+ (Swift 6.2 toolchain), required to resolve the package because of Adapty 4.x
+  (Xcode 26+, bắt buộc để resolve package vì Adapty 4.x)
+- RevenueCat account & API key — for `TNSubscriptionIOS` only (chỉ cho `TNSubscriptionIOS`)
 
 ---
 

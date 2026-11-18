@@ -12,7 +12,10 @@ concurrency:
 jobs:
   test:
     name: Build & Test (iOS Simulator)
-    runs-on: macos-15
+    # macos-26 (Xcode 26), not macos-15: Adapty 4.x declares swift-tools-version 6.2, which
+    # Xcode 16's Swift 6.1 cannot even resolve — and SwiftPM resolves the whole dependency
+    # graph, so it would break the build for every target, not just TNSubscriptionAdapty.
+    runs-on: macos-26
     timeout-minutes: 20
 
     steps:
