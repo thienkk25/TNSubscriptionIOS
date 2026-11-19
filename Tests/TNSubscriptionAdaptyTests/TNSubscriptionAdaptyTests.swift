@@ -294,6 +294,32 @@ final class TNAdaptyEngineTests: XCTestCase {
         XCTAssertTrue(TNSubscriptionAdapty.cachedIsPremium)
     }
 
+    /// `waitUntilAdaptyActivated()` is what apps call before `AdaptyUI.activate()`. It must report
+    /// failure promptly rather than hang, or the vendor paywall would never appear.
+    /// (Đây là hàm app gọi trước `AdaptyUI.activate()`. Nó phải báo thất bại ngay chứ không được treo,
+    /// nếu không paywall của Adapty sẽ không bao giờ hiện ra.)
+    func testWaitUntilAdaptyActivatedReturnsFalseWithABadKeyInsteadOfHanging() async throws {
+        TNSubscriptionAdapty.configure(config: TNSubscriptionConfig(
+            apiKey: "appl_not_an_adapty_key",
+            entitlements: [TNEntitlement(id: "premium")]
+        ))
+
+        let activated = await TNSubscriptionAdapty.shared.waitUntilAdaptyActivated()
+
+        XCTAssertFalse(activated)
+    }
+
+    func testWaitUntilAdaptyActivatedReturnsFalseWhenIAPIsDisabled() async throws {
+        TNSubscriptionAdapty.configure(config: TNSubscriptionConfig(
+            entitlements: [TNEntitlement(id: "premium")],
+            isIAPEnabled: false
+        ))
+
+        let activated = await TNSubscriptionAdapty.shared.waitUntilAdaptyActivated()
+
+        XCTAssertFalse(activated, "With IAP off Adapty is never activated, so AdaptyUI must not be either.")
+    }
+
     func testWarmStartUnlocksFromAnUnexpiredCacheEntry() async throws {
         UserDefaults.standard.set(
             ["premium": Date.distantFuture.timeIntervalSince1970],

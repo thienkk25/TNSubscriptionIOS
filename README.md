@@ -118,12 +118,13 @@ nhưng mỗi bên có thuộc tính riêng và test contract không bao phủ ph
 | Feature (Tính năng) | RevenueCat | Core | Adapty |
 |---|---|---|---|
 | Cloud virtual currency — `TNInAppCurrencyManager` | ✅ | — | — |
+| Vendor's own paywall, designed in their dashboard (Paywall của nhà cung cấp, thiết kế trên dashboard) | ✅ RevenueCatUI — [§3 Option C](#option-c-revenuecats-own-paywall--revenuecatui-paywall-của-chính-revenuecat) | — | ✅ AdaptyUI — [ADAPTY.md §4.1](ADAPTY.md) |
 | `entitlementInfo(for:)` — expiry, renewal, billing issues | — | ✅ | ✅ |
 | `showManageSubscriptions()`, `requestRefund(for:)` | — | ✅ | ✅ |
 | `cachedIsPremium` — read from a background thread without `await` | — | ✅ | ✅ |
 | `currentOfferingMetadata` | — | ✅ | ✅ |
 | `updateOfferings(_:current:)`, `configurePromotionalOfferSigner(_:)` | — | ✅ | — |
-| `identify(_:)`, `logout()`, `logPaywallShown()`, `offer(for:)` | — | — | ✅ |
+| `identify(_:)`, `logout()`, `logPaywallShown()`, `offer(for:)`, `waitUntilAdaptyActivated()` | — | — | ✅ |
 | Server-authoritative spending (Tiêu qua server) | on `TNInAppCurrencyManager` | on `TNConsumableManager` | on `TNConsumableManager` |
 
 **3. Concurrency.** `TNSubscriptionCore` and `TNSubscriptionAdapty` are `@MainActor`; call them with
@@ -356,6 +357,14 @@ struct ContentView: View {
 
 ## 3. Present Paywall (Hiển thị Paywall)
 
+Three ways, and you can mix them in one app (Ba cách, và có thể dùng lẫn trong cùng một app):
+
+| | Design lives in (Thiết kế nằm ở) | Changes without an app update (Đổi không cần cập nhật app) |
+|---|---|---|
+| **A. Default paywall** | `DefaultPaywallConfig` in code | no |
+| **B. Custom paywall** | your SwiftUI view | no |
+| **C. RevenueCatUI** | RevenueCat dashboard | yes |
+
 ### Option A: Default Paywall (Paywall mặc định)
 
 Package provides a built-in paywall. Just pass a config. (Package cung cấp paywall đẹp sẵn. Chỉ cần truyền config.)
@@ -558,6 +567,118 @@ struct MyCustomPaywallView: View {
     }
 }
 ```
+
+### Option C: RevenueCat's own paywall — RevenueCatUI (Paywall của chính RevenueCat)
+
+Use the paywalls you design in the RevenueCat dashboard instead of the package's UI.
+(Dùng paywall bạn thiết kế trên dashboard RevenueCat thay cho giao diện của package.)
+
+**Supported, not wrapped.** This package does not import RevenueCatUI, so it adds nothing to apps
+that do not use it. Your app imports it directly, and the engine stays in sync on its own.
+(**Được hỗ trợ, nhưng không được bọc.** Package không import RevenueCatUI, nên không làm nặng app
+nào không dùng nó. App của bạn import trực tiếp, và engine tự đồng bộ trạng thái.)
+
+**1. Add the product (Thêm product).** In Xcode: *Target → General → Frameworks → Add →
+`RevenueCatUI`*. It comes from `purchases-ios-spm`, which this package already resolves, so there is
+nothing new to download and the versions always match.
+(Trong Xcode thêm product `RevenueCatUI`. Nó thuộc `purchases-ios-spm`, package này đã resolve sẵn,
+nên không tải thêm gì và phiên bản luôn khớp nhau.)
+
+**2. Configure as usual** — no extra step. (**Cấu hình như bình thường** — không cần bước nào thêm.)
+
+**3. Present it.** (Hiển thị.)
+
+SwiftUI — automatically, whenever `"Premium"` is not active:
+(SwiftUI — tự động, mỗi khi `"Premium"` chưa hoạt động:)
+
+```swift
+import SwiftUI
+import RevenueCatUI
+import TNSubscriptionIOS
+
+// MARK: SwiftUI — show RevenueCat's paywall automatically while "Premium" is missing.
+struct RCHomeScreen: View {
+    @ObservedObject private var subscription = TNSubscription.shared
+
+    var body: some View {
+        Text(subscription.isPremium ? "Premium" : "Free")
+            .presentPaywallIfNeeded(requiredEntitlementIdentifier: "Premium")
+    }
+}
+```
+
+SwiftUI — on demand (SwiftUI — khi người dùng bấm):
+
+```swift
+// MARK: SwiftUI — show it on demand.
+struct RCUpgradeButton: View {
+    @State private var showPaywall = false
+
+    var body: some View {
+        Button("Upgrade") { showPaywall = true }
+            .sheet(isPresented: $showPaywall) {
+                PaywallView(displayCloseButton: true)
+            }
+    }
+}
+```
+
+UIKit:
+
+```swift
+import UIKit
+import RevenueCat
+import RevenueCatUI
+import TNSubscriptionIOS
+
+// MARK: UIKit
+final class RCSettingsViewController: UIViewController, @preconcurrency PaywallViewControllerDelegate {
+    func showUpgrade() {
+        let paywall = PaywallViewController(displayCloseButton: true)
+        paywall.delegate = self
+        present(paywall, animated: true)
+    }
+
+    func paywallViewController(_ controller: PaywallViewController,
+                               didFinishPurchasingWith customerInfo: CustomerInfo) {
+        controller.dismiss(animated: true)
+    }
+}
+```
+
+**What updates by itself after a purchase.** The engine registers itself as RevenueCat's
+`Purchases.shared.delegate`, and RevenueCat calls it whenever `CustomerInfo` changes — including
+after a purchase or restore made through RevenueCatUI. So `isPremium`, `activeEntitlements`,
+`entitlementState` and `customerInfo` update without any code from you.
+(**Những gì tự cập nhật sau khi mua.** Engine tự đăng ký làm `Purchases.shared.delegate` của RevenueCat, và
+RevenueCat gọi nó mỗi khi `CustomerInfo` thay đổi — kể cả sau khi mua hoặc khôi phục qua RevenueCatUI.
+Vì vậy `isPremium`, `activeEntitlements`, `entitlementState` và `customerInfo` tự cập nhật, bạn không
+phải viết gì thêm.)
+
+**Rules (Quy tắc):**
+
+- **Never assign `Purchases.shared.delegate` yourself.** RevenueCat has a single delegate; replacing
+  it silently disconnects the engine and `isPremium` stops updating. Use the paywall's own callbacks
+  (`PaywallViewControllerDelegate`, or the `presentPaywallIfNeeded` handlers) instead. RevenueCatUI
+  itself does not touch the delegate.
+  (**Không bao giờ tự gán `Purchases.shared.delegate`.** RevenueCat chỉ có một delegate; gán đè sẽ âm
+  thầm ngắt kết nối engine và `isPremium` ngừng cập nhật. Hãy dùng callback của chính paywall. Bản
+  thân RevenueCatUI không đụng vào delegate.)
+- **`requiredEntitlementIdentifier` must be the same ID as your `TNEntitlement.id`**, i.e. the
+  RevenueCat entitlement ID, spelt exactly the same.
+  (**`requiredEntitlementIdentifier` phải trùng với `TNEntitlement.id`** — tức ID entitlement trên
+  RevenueCat, viết chính xác như nhau.)
+- **`isPurchasing` and `TNPurchaseError` do not apply.** The purchase runs inside RevenueCatUI, not
+  through the engine, so react to the paywall's callbacks for progress and errors.
+  (**`isPurchasing` và `TNPurchaseError` không áp dụng.** Giao dịch chạy bên trong RevenueCatUI chứ
+  không qua engine, nên hãy dùng callback của paywall để theo dõi tiến trình và lỗi.)
+- **`DefaultPaywallConfig` has no effect here.** Products, layout and copy come from the RevenueCat
+  dashboard. (**`DefaultPaywallConfig` không có tác dụng ở đây.** Sản phẩm, bố cục và nội dung lấy từ
+  dashboard RevenueCat.)
+- **Swift 6 language mode:** declare the UIKit conformance as `@preconcurrency
+  PaywallViewControllerDelegate`, as above — it is an Objective-C protocol without actor annotations.
+  (**Swift 6 language mode:** khai báo conformance UIKit là `@preconcurrency
+  PaywallViewControllerDelegate` như trên — đây là protocol Objective-C chưa có chú thích actor.)
 
 ---
 

@@ -137,6 +137,218 @@ package.variationId
 
 ---
 
+## 4.1. Adapty's own paywall — AdaptyUI (Paywall của chính Adapty — AdaptyUI)
+
+Use paywalls built in Adapty's no-code **Paywall Builder** instead of the package's UI. You can
+change their design and run A/B tests from the dashboard without shipping an app update.
+(Dùng paywall dựng bằng **Paywall Builder** không cần code của Adapty thay cho giao diện của package.
+Có thể đổi thiết kế và chạy A/B test từ dashboard mà không cần phát hành bản cập nhật app.)
+
+**Supported, not wrapped.** This target does not import AdaptyUI, so it adds nothing to apps that
+do not use it. Your app imports it directly, and the engine stays in sync on its own.
+(**Được hỗ trợ, nhưng không được bọc.** Target này không import AdaptyUI, nên không làm nặng app
+nào không dùng nó. App của bạn import trực tiếp, và engine tự đồng bộ trạng thái.)
+
+The code below is compiled against AdaptyUI 4.4 in Swift 6 language mode.
+(Đoạn code dưới đây đã được compile với AdaptyUI 4.4 ở Swift 6 language mode.)
+
+### Step 1 — Add the product (Thêm product)
+
+In Xcode: *Target → General → Frameworks → Add → `AdaptyUI`*. It comes from `AdaptySDK-iOS`, which
+this package already resolves, so the versions always match.
+(Thêm product `AdaptyUI`. Nó thuộc `AdaptySDK-iOS`, package này đã resolve sẵn, nên phiên bản luôn
+khớp nhau.)
+
+### Step 2 — Activate AdaptyUI once, after Adapty (Kích hoạt AdaptyUI một lần, sau Adapty)
+
+```swift
+import SwiftUI
+import Adapty
+import AdaptyUI
+import TNSubscriptionAdapty
+
+// MARK: Once at launch, right after TNSubscription.configure(...)
+@MainActor
+func activateAdaptyUI() async {
+    // AdaptyUI needs Adapty activated first, and Adapty activates in the background.
+    guard await TNSubscription.shared.waitUntilAdaptyActivated() else { return }
+    do {
+        try await AdaptyUI.activate()
+    } catch {
+        print("AdaptyUI activation failed: \(error)")
+    }
+}
+```
+
+Call it once, right after `TNSubscription.configure(...)` — for example in a `.task` on your root
+view. (Gọi một lần, ngay sau `TNSubscription.configure(...)` — ví dụ trong `.task` của view gốc.)
+
+**Why `waitUntilAdaptyActivated()` is required.** `configure` starts Adapty's activation in a
+background task. `AdaptyUI.activate()` waits for an activation that is in progress, but throws
+`adaptyNotActivated` if it has not started yet — so calling it straight after `configure` fails
+intermittently. `waitUntilAdaptyActivated()` removes that race, and returns `false` instead of
+hanging when the API key is bad or IAP is disabled. Calling `AdaptyUI.activate()` a second time
+throws `activateOnce`, hence "once".
+(**Vì sao bắt buộc dùng `waitUntilAdaptyActivated()`.** `configure` khởi động việc kích hoạt Adapty
+trong một task nền. `AdaptyUI.activate()` sẽ chờ nếu việc kích hoạt đang diễn ra, nhưng sẽ throw
+`adaptyNotActivated` nếu nó chưa bắt đầu — nên gọi ngay sau `configure` sẽ thỉnh thoảng thất bại.
+`waitUntilAdaptyActivated()` loại bỏ race này, và trả về `false` thay vì treo khi API key sai hoặc IAP
+bị tắt. Gọi `AdaptyUI.activate()` lần thứ hai sẽ throw `activateOnce`, nên chỉ gọi một lần.)
+
+### Step 3 — Present it (Hiển thị)
+
+SwiftUI:
+
+```swift
+import SwiftUI
+import Adapty
+import AdaptyUI
+import TNSubscriptionAdapty
+
+// MARK: SwiftUI
+@MainActor
+final class AdaptyPaywallModel: ObservableObject {
+    @Published var configuration: AdaptyUI.FlowConfiguration?
+
+    func load(placementId: String) async {
+        do {
+            let flow = try await Adapty.getFlow(placementId: placementId)
+            configuration = try await AdaptyUI.getFlowConfiguration(forFlow: flow)
+        } catch {
+            configuration = nil
+        }
+    }
+}
+
+struct AdaptyUpgradeButton: View {
+    @StateObject private var model = AdaptyPaywallModel()
+    @State private var isPresented = false
+
+    var body: some View {
+        Button("Upgrade") { isPresented = true }
+            .disabled(model.configuration == nil)
+            .task { await model.load(placementId: "main") }
+            .flow(
+                isPresented: $isPresented,
+                flowConfiguration: model.configuration,
+                didFinishPurchase: { _, result in
+                    guard !result.isPurchaseCancelled else { return }
+                    TNSubscription.shared.checkSubscriptionStatus()
+                    isPresented = false
+                },
+                didFailPurchase: { _, _ in },
+                didFinishRestore: { _ in
+                    TNSubscription.shared.checkSubscriptionStatus()
+                    isPresented = false
+                },
+                didFailRestore: { _ in },
+                didReceiveError: { _ in isPresented = false }
+            )
+    }
+}
+```
+
+UIKit:
+
+```swift
+import UIKit
+import Adapty
+import AdaptyUI
+import TNSubscriptionAdapty
+
+// MARK: UIKit
+final class AdaptySettingsViewController: UIViewController, AdaptyFlowControllerDelegate {
+    func showUpgrade() async {
+        do {
+            let flow = try await Adapty.getFlow(placementId: "main")
+            let configuration = try await AdaptyUI.getFlowConfiguration(forFlow: flow)
+            let controller = try AdaptyUI.flowController(with: configuration, delegate: self)
+            present(controller, animated: true)
+        } catch {
+            print("Could not show the Adapty paywall: \(error)")
+        }
+    }
+
+    func flowController(_ controller: AdaptyFlowController,
+                        didFinishPurchase product: AdaptyPaywallProduct,
+                        purchaseResult: AdaptyPurchaseResult) {
+        guard !purchaseResult.isPurchaseCancelled else { return }
+        TNSubscription.shared.checkSubscriptionStatus()
+        controller.dismiss(animated: true)
+    }
+
+    func flowController(_ controller: AdaptyFlowController,
+                        didFailPurchase product: AdaptyPaywallProduct,
+                        error: AdaptyError) {
+        print("Purchase failed: \(error)")
+    }
+
+    func flowController(_ controller: AdaptyFlowController,
+                        didFinishRestoreWith profile: AdaptyProfile) {
+        TNSubscription.shared.checkSubscriptionStatus()
+        controller.dismiss(animated: true)
+    }
+
+    func flowController(_ controller: AdaptyFlowController,
+                        didFailRestoreWith error: AdaptyError) {
+        print("Restore failed: \(error)")
+    }
+
+    func flowController(_ controller: AdaptyFlowController,
+                        didReceiveError error: AdaptyUIError) {
+        controller.dismiss(animated: true)
+    }
+}
+```
+
+`didFinishPurchase`, `didFailPurchase`, `didFinishRestoreWith` and `didFailRestoreWith` are the four
+delegate methods AdaptyUI requires; the others have default implementations.
+(`didFinishPurchase`, `didFailPurchase`, `didFinishRestoreWith` và `didFailRestoreWith` là bốn method
+delegate bắt buộc của AdaptyUI; các method còn lại đã có bản mặc định.)
+
+### What updates by itself (Những gì tự cập nhật)
+
+The engine is registered as `Adapty.delegate` and applies every profile Adapty pushes, so
+`isPremium`, `activeEntitlements` and `customerInfo` normally update after an AdaptyUI purchase with
+no code from you. The examples above also call `checkSubscriptionStatus()` after a purchase or
+restore: that re-reads the profile directly, so the result does not depend on the delegate callback
+alone. Keep it — it costs one request.
+(Engine được đăng ký làm `Adapty.delegate` và áp dụng mọi profile Adapty đẩy về, nên thông thường
+`isPremium`, `activeEntitlements` và `customerInfo` tự cập nhật sau khi mua qua AdaptyUI. Các ví dụ
+trên còn gọi thêm `checkSubscriptionStatus()` sau khi mua hoặc khôi phục: lệnh này đọc lại profile
+trực tiếp, để kết quả không chỉ phụ thuộc vào callback của delegate. Hãy giữ lại — chỉ tốn một
+request.)
+
+### Rules (Quy tắc)
+
+- **Never assign `Adapty.delegate` yourself.** Adapty has a single delegate; replacing it silently
+  disconnects the engine. Use AdaptyUI's own callbacks instead. AdaptyUI uses
+  `AdaptyFlowControllerDelegate`, not `Adapty.delegate`, so it does not conflict.
+  (**Không bao giờ tự gán `Adapty.delegate`.** Adapty chỉ có một delegate; gán đè sẽ âm thầm ngắt kết
+  nối engine. Hãy dùng callback của AdaptyUI. AdaptyUI dùng `AdaptyFlowControllerDelegate` chứ không
+  phải `Adapty.delegate`, nên không xung đột.)
+- **Do not call `logPaywallShown()` for an AdaptyUI paywall.** AdaptyUI reports its own views;
+  logging them again would double-count them in your A/B tests. `logPaywallShown()` is only for the
+  package's paywall and your own custom ones.
+  (**Không gọi `logPaywallShown()` cho paywall AdaptyUI.** AdaptyUI tự báo lượt xem; ghi thêm lần nữa
+  sẽ đếm trùng trong A/B test. `logPaywallShown()` chỉ dành cho paywall của package và paywall tự viết.)
+- **The placement ID is the same one** you would pass as `currentOfferingIdentifier` — a placement
+  can be shown either through AdaptyUI or through the package's paywall.
+  (**Placement ID là cùng một giá trị** với `currentOfferingIdentifier` — một placement có thể hiển
+  thị qua AdaptyUI hoặc qua paywall của package.)
+- **`isPurchasing` and `TNPurchaseError` do not apply.** The purchase runs inside AdaptyUI, so use
+  its callbacks for progress and errors.
+  (**`isPurchasing` và `TNPurchaseError` không áp dụng.** Giao dịch chạy bên trong AdaptyUI, nên hãy
+  dùng callback của nó để theo dõi tiến trình và lỗi.)
+- **`DefaultPaywallConfig` has no effect here.** The design comes from the Paywall Builder.
+  (**`DefaultPaywallConfig` không có tác dụng ở đây.** Thiết kế lấy từ Paywall Builder.)
+- **The placement must have a Paywall Builder layout.** A placement with only products and remote
+  config has no layout to render; show it with the package's paywall instead.
+  (**Placement phải có layout từ Paywall Builder.** Placement chỉ có sản phẩm và remote config thì
+  không có gì để vẽ; hãy hiển thị nó bằng paywall của package.)
+
+---
+
 ## 5. How it decides access (Cách xác định quyền truy cập)
 
 1. **Warm start** — at launch, an unexpired cached result unlocks synchronously, so a paying user
@@ -259,10 +471,9 @@ theo tháng dùng phân số nguyên chính xác.)
 
 ## 9. Known limits (Giới hạn đã biết)
 
-- **AdaptyUI (the no-code Paywall Builder) is not wrapped.** This target ships the same SwiftUI
-  paywall as the others. To show a Builder paywall, use `AdaptyUI` directly alongside it.
-  (**AdaptyUI (Paywall Builder không cần code) chưa được bọc.** Target này dùng chung paywall SwiftUI
-  với các target khác. Muốn dùng paywall Builder thì gọi `AdaptyUI` trực tiếp song song.)
+- **AdaptyUI is supported but not wrapped** — your app imports it directly. See §4.1 for the
+  setup and its rules. (**AdaptyUI được hỗ trợ nhưng không được bọc** — app của bạn import trực
+  tiếp. Xem §4.1 để biết cách cấu hình và các quy tắc.)
 - **Consumables and transaction finishing.** `TNConsumableManager` uses raw StoreKit, while
   Adapty finishes transactions automatically by default. If the app is killed between a payment
   and the credit, Adapty may finish the transaction before recovery reads it, and that one credit

@@ -313,6 +313,32 @@ public final class TNSubscriptionAdapty: ObservableObject {
         await activationTask?.value
     }
 
+    /// Waits until Adapty has finished activating, and returns whether it succeeded.
+    /// (Chờ tới khi Adapty kích hoạt xong, và trả về việc kích hoạt có thành công hay không.)
+    ///
+    /// **Call this before `AdaptyUI.activate()`.** Adapty activates in a background task started
+    /// by `configure(config:)`, and `AdaptyUI.activate()` throws `adaptyNotActivated` if that task
+    /// has not begun yet — so calling it right after `configure` fails intermittently.
+    /// (**Gọi hàm này trước `AdaptyUI.activate()`.** Adapty kích hoạt trong một task nền do
+    /// `configure(config:)` khởi chạy, và `AdaptyUI.activate()` sẽ throw `adaptyNotActivated` nếu
+    /// task đó chưa bắt đầu — nên gọi ngay sau `configure` sẽ thỉnh thoảng thất bại.)
+    ///
+    /// ```swift
+    /// if await TNSubscription.shared.waitUntilAdaptyActivated() {
+    ///     try await AdaptyUI.activate()
+    /// }
+    /// ```
+    ///
+    /// Returns `false` without waiting when IAP is disabled, and `false` once activation has
+    /// failed (a bad API key, for example) — it never hangs.
+    /// (Trả về `false` ngay khi IAP bị tắt, và `false` khi kích hoạt thất bại — ví dụ API key sai.
+    /// Hàm này không bao giờ treo.)
+    @discardableResult
+    public func waitUntilAdaptyActivated() async -> Bool {
+        await awaitActivation()
+        return isAdaptyActivated
+    }
+
     // MARK: - Entitlement Queries
 
     /// Whether one access level is active. (Một access level có đang hoạt động không.)
