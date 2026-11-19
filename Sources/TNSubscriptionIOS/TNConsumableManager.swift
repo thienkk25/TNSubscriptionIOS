@@ -3,35 +3,7 @@ import StoreKit
 import RevenueCat
 import Combine
 
-// MARK: - Consumable Product Configuration
-
-/// A consumable product definition with reward amount.
-/// (Định nghĩa sản phẩm consumable với số lượng reward.)
-///
-/// Example:
-/// ```swift
-/// TNConsumableProduct(id: "com.app.100coins", reward: 100, currency: "coins")
-/// TNConsumableProduct(id: "com.app.500coins", reward: 500, currency: "coins")
-/// TNConsumableProduct(id: "com.app.vip_badge", reward: 1, currency: "badges")
-/// ```
-public struct TNConsumableProduct {
-    /// StoreKit Product ID (e.g. "com.yourapp.100coins").
-    public let id: String
-    
-    /// Amount to add after purchase (e.g. 100 coins).
-    /// (Số lượng cộng sau khi mua, ví dụ 100 coins.)
-    public let reward: Int
-    
-    /// Currency type name (e.g. "coins", "gems", "credits").
-    /// (Tên loại tiền, ví dụ "coins", "gems", "credits".)
-    public let currency: String
-    
-    public init(id: String, reward: Int, currency: String) {
-        self.id = id
-        self.reward = reward
-        self.currency = currency
-    }
-}
+// `TNConsumableProduct` lives in TNSubscriptionShared. (`TNConsumableProduct` nằm trong TNSubscriptionShared.)
 
 // MARK: - TNConsumableManager
 

@@ -45,6 +45,26 @@ public struct TNDefaultPaywallView: View {
         return filtered.isEmpty ? manager.availablePackages : filtered
     }
     
+    /// The reference plan for "save X%": the most expensive per month on display.
+    /// (Gói tham chiếu cho "tiết kiệm X%": gói đắt nhất tính theo tháng đang hiển thị.)
+    private var savingsBaseline: Package? {
+        displayedPackages
+            .filter { $0.storeProduct.pricePerMonth != nil }
+            .max { ($0.storeProduct.pricePerMonth?.doubleValue ?? 0) < ($1.storeProduct.pricePerMonth?.doubleValue ?? 0) }
+    }
+
+    /// The same savings maths as the other engines, in `Double` so a `Decimal` overflow can
+    /// never surface as "SAVE 0%".
+    /// (Cùng cách tính tiết kiệm như các engine khác, bằng `Double` để tràn `Decimal` không bao giờ
+    /// hiện thành "SAVE 0%".)
+    private func savingsPercentage(_ package: Package, comparedTo baseline: Package) -> Int? {
+        guard let mine = package.storeProduct.pricePerMonth?.doubleValue,
+              let theirs = baseline.storeProduct.pricePerMonth?.doubleValue,
+              theirs > 0, mine.isFinite, theirs.isFinite, mine < theirs else { return nil }
+        let percentage = (theirs - mine) / theirs * 100
+        return percentage.isFinite ? Int(percentage.rounded(.down)) : nil
+    }
+
     private enum UpgradeAlert: Identifiable {
         case purchaseSuccess
         case purchaseFailed(String)
@@ -343,6 +363,9 @@ public struct TNDefaultPaywallView: View {
         let isCurrent = manager.currentPlanProductID == package.storeProduct.productIdentifier
         let isRecommended = TNSubscriptionIOS.isRecommendedPackage(package)
         let eligibleIntro = manager.introOffer(for: package)
+        let savings = config.showSavingsBadge
+            ? savingsBaseline.flatMap { savingsPercentage(package, comparedTo: $0) }
+            : nil
         
         return Button {
             selectedPackage = package
@@ -360,6 +383,15 @@ public struct TNDefaultPaywallView: View {
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 4)
                                 .background(config.accentColor)
+                                .clipShape(Capsule())
+                        }
+                        if let savings, savings > 0 {
+                            Text(String(format: NSLocalizedString("SAVE %d%%", comment: ""), savings))
+                                .font(.system(size: 9, weight: .black))
+                                .foregroundStyle(config.secondaryColor)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(config.secondaryColor.opacity(0.15))
                                 .clipShape(Capsule())
                         }
                         if let intro = eligibleIntro {
@@ -388,9 +420,19 @@ public struct TNDefaultPaywallView: View {
                         .foregroundStyle(eligibleIntro != nil ? config.accentColor : config.textSecondaryColor)
                 }
                 Spacer()
-                Text(package.storeProduct.localizedPriceString)
-                    .font(.title3.weight(.bold))
-                    .foregroundStyle(config.accentColor)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text(package.storeProduct.localizedPriceString)
+                        .font(.title3.weight(.bold))
+                        .foregroundStyle(config.accentColor)
+                    if config.showPricePerMonth,
+                       package.packageType != .monthly,
+                       package.packageType != .lifetime,
+                       let perMonth = package.storeProduct.localizedPricePerMonth {
+                        Text(String(format: NSLocalizedString("%@ / mo", comment: ""), perMonth))
+                            .font(.caption2)
+                            .foregroundStyle(config.textMutedColor)
+                    }
+                }
             }
             .padding(16)
             .background(isSelected ? config.cardLightColor : config.cardColor)

@@ -48,11 +48,26 @@ vẫn chạy như trước.)
 | `VirtualCurrencies` (RC server) | local balances in `TNConsumableManager` | Keychain |
 | `logLevel` → RC SDK | `logLevel` → this package only | `os.Logger` |
 
-Shared type names are **kept identical** (`TNEntitlement`, `TNSubscriptionConfig`,
-`DefaultPaywallConfig`, `TNConsumableProduct`, `TNLogLevel`) so migration is mostly an
-`import` swap. For that reason, **do not import both modules** in one file — the names
-collide. (Tên các kiểu dùng chung được **giữ nguyên** để migrate gần như chỉ là đổi `import`.
-Vì vậy **đừng import cả hai module** trong một file — tên sẽ bị trùng.)
+**The configuration is one shared type, not a copy.** `TNSubscriptionConfig`, `TNEntitlement`,
+`TNOffering`, `TNLogLevel`, `DefaultPaywallConfig` and `TNConsumableProduct` live in the
+`TNSubscriptionShared` module, which every engine re-exports — so they cannot differ between
+engines. Every engine also exposes `TNSubscription` as an alias of its entry point. Code that uses
+only the shared config and the common API switches engine by changing only the `import` — see
+[README → "What is the same, what differs"](README.md#what-is-the-same-what-differs-cái-gì-giống-cái-gì-khác)
+for exactly which APIs that covers.
+(**Cấu hình là một kiểu dùng chung, không phải bản sao.** Các kiểu cấu hình nằm trong module
+`TNSubscriptionShared`, được mọi engine re-export — nên không thể khác nhau giữa các engine. Mọi
+engine cũng có `TNSubscription` làm alias cho điểm vào. Code chỉ dùng config chung và phần API chung
+thì đổi engine chỉ cần đổi `import` — xem README, mục "What is the same, what differs", để biết chính
+xác những API nào.)
+
+What is **not** shared: the model types. `TNPackage`, `TNCustomerInfo` and `TNSubscriptionOffer` are
+Core's own; the RevenueCat engine uses RevenueCat's `Package` and `CustomerInfo` instead. So a custom
+paywall that lists packages must be rewritten when moving here from RevenueCat. Import only one engine
+per app. (Phần **không** dùng chung: các kiểu model. `TNPackage`, `TNCustomerInfo`,
+`TNSubscriptionOffer` là của riêng Core; engine RevenueCat dùng `Package` và `CustomerInfo` của
+RevenueCat. Vì vậy paywall tự viết có liệt kê gói phải viết lại khi chuyển từ RevenueCat sang. Mỗi app
+chỉ import một engine.)
 
 ---
 
@@ -61,7 +76,7 @@ Vì vậy **đừng import cả hai module** trong một file — tên sẽ bị
 ```swift
 import TNSubscriptionCore
 
-TNSubscriptionCore.configure(config: TNSubscriptionConfig(
+TNSubscription.configure(config: TNSubscriptionConfig(
     entitlements: [
         TNEntitlement(id: "Premium", productIDs: ["com.app.weekly", "com.app.yearly"]),
         TNEntitlement(id: "Sale",    productIDs: ["com.app.sale_yearly"]),
@@ -76,9 +91,11 @@ TNSubscriptionCore.configure(config: TNSubscriptionConfig(
 ))
 ```
 
-Compared with the RevenueCat target: **drop `apiKey:`**, **add `offerings:`** (there is no
-dashboard). Everything else is unchanged. (So với target RevenueCat: **bỏ `apiKey:`**, **thêm
-`offerings:`** vì không có dashboard. Mọi thứ còn lại giữ nguyên.)
+It is the same `TNSubscriptionConfig` every engine takes. Core reads `offerings:` (it has no
+dashboard) and ignores `apiKey:` — passing one is harmless and logs a warning at `configure`, as
+does any setting Core cannot honour. (Đây là cùng một `TNSubscriptionConfig` mà mọi engine nhận.
+Core đọc `offerings:` vì không có dashboard, và bỏ qua `apiKey:` — truyền vào cũng không sao, chỉ
+ghi một cảnh báo lúc `configure`, giống mọi thiết lập Core không áp dụng được.)
 
 Swap offerings at runtime — A/B tests, a seasonal paywall — from your own remote config:
 (Đổi offering lúc runtime — A/B test, paywall theo mùa — từ remote config của bạn:)
@@ -223,8 +240,12 @@ sai "sắp hết hạn" cho một subscription đang khoẻ là lỗi tệ hơn.
 
 1. Swap the product in `Package.swift` / Xcode: `TNSubscriptionIOS` → `TNSubscriptionCore`.
 2. `import TNSubscriptionIOS` → `import TNSubscriptionCore`.
-3. In `configure`: drop `apiKey:`, add `offerings:` if your paywall uses more than one.
-4. `TNSubscriptionIOS.shared` → `TNSubscriptionCore.shared`.
+3. The config stays as it is. Add `offerings:` if your paywall uses more than one; `apiKey:` can
+   stay — it is ignored with a warning. (Config giữ nguyên. Thêm `offerings:` nếu paywall dùng nhiều
+   hơn một; `apiKey:` để nguyên cũng được — sẽ bị bỏ qua kèm cảnh báo.)
+4. Code written against `TNSubscription.shared` needs no change; `TNSubscriptionIOS.shared` becomes
+   `TNSubscriptionCore.shared`. (Code viết theo `TNSubscription.shared` không cần sửa;
+   `TNSubscriptionIOS.shared` thành `TNSubscriptionCore.shared`.)
 5. `Package` → `TNPackage`, `CustomerInfo` → `TNCustomerInfo`.
 6. Background call sites: add `await`, or switch to `TNSubscriptionCore.cachedIsPremium`.
 7. If you use promotional offers: install `configurePromotionalOfferSigner(_:)`.
@@ -239,7 +260,7 @@ SDK. (Entitlement đã mua **không mất gì** khi đổi: nguồn chân lý l�
 
 Two layers, because StoreKit forces the split. (Hai tầng, vì StoreKit buộc phải tách như vậy.)
 
-### Unit tests — 28 tests, 8 suites (SwiftPM)
+### Unit tests — 34 tests, 9 suites (SwiftPM)
 
 ```bash
 xcodebuild test -scheme TNSubscriptionIOS-Package \
@@ -248,9 +269,12 @@ xcodebuild test -scheme TNSubscriptionIOS-Package \
 ```
 
 Pure value logic: config resolution, offering synthesis, package ordering, the concurrent
-snapshot, offer-signature parsing, error messages, identity headers, log thresholds.
+snapshot, offer-signature parsing, error messages, identity headers, log thresholds — plus the
+engine contract (`TNEngineContractTests`), which proves Core exposes the same configuration and
+common API as the other two engines.
 (Logic thuần giá trị: xử lý config, tự sinh offering, thứ tự gói, snapshot đa luồng, parse chữ
-ký offer, thông báo lỗi, identity header, ngưỡng log.)
+ký offer, thông báo lỗi, identity header, ngưỡng log — cộng thêm test contract
+(`TNEngineContractTests`), chứng minh Core có cùng cấu hình và API chung với hai engine kia.)
 
 ### Integration tests — 61 tests, 3 suites (Xcode host app)
 

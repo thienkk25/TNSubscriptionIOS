@@ -6,112 +6,20 @@ import Combine
 import UIKit
 import Security
 
-// MARK: - TNSubscriptionIOS Configuration
+// MARK: - Shared Configuration
 
-/// A single entitlement definition with its associated StoreKit Product IDs.
-///
-/// Example:
-/// ```swift
-/// TNEntitlement(id: "Premium", productIDs: ["com.app.weekly", "com.app.yearly"])
-/// TNEntitlement(id: "Sale", productIDs: ["com.app.sale_yearly"])
-/// ```
-public struct TNEntitlement {
-    /// The entitlement identifier as configured in RevenueCat (e.g. "Premium").
-    public let id: String
-    
-    /// The set of StoreKit Product IDs that grant this entitlement.
-    public let productIDs: Set<String>
-    
-    public init(id: String, productIDs: Set<String>) {
-        self.id = id
-        self.productIDs = productIDs
-    }
-}
+// TNSubscriptionConfig, TNEntitlement, TNOffering, TNLogLevel, DefaultPaywallConfig and
+// TNConsumableProduct live in TNSubscriptionShared, so they are identical in every engine.
+// (Các kiểu cấu hình nằm trong TNSubscriptionShared, nên giống hệt nhau ở mọi engine.)
+@_exported import TNSubscriptionShared
 
-/// Configuration for the TNSubscriptionIOS core engine.
-/// Host apps must call `TNSubscriptionIOS.configure(...)` before using any functionality.
-///
-/// Usage:
-/// ```swift
-/// TNSubscriptionIOS.configure(config: TNSubscriptionConfig(
-///     apiKey: "appl_xxxxx",
-///     entitlements: [
-///         TNEntitlement(id: "Premium", productIDs: ["com.app.weekly", "com.app.monthly", "com.app.yearly"]),
-///         TNEntitlement(id: "Sale", productIDs: ["com.app.sale_yearly"]),
-///     ]
-/// ))
-/// ```
-public struct TNSubscriptionConfig {
-    public let apiKey: String
-    public let entitlements: [TNEntitlement]
-    public let isIAPEnabled: Bool
-    /// Set to `true` only if your app has a Backend/Proxy and wants `client_id` synced to RevenueCat at launch.
-    /// Defaults to `false` (serverless apps do not need backend identity sync; accessing `TNSubscriptionIOS.clientId` will still lazily sync if needed).
-    public let enableBackendIdentitySync: Bool
-
-    /// Diagnostic verbosity for both TNSubscriptionIOS and the underlying RevenueCat SDK.
-    /// Defaults to `.info` in DEBUG builds and `.error` in Release builds.
-    ///
-    /// Raise this to `.verbose` when products or entitlements are not resolving — the RevenueCat SDK
-    /// then reports exactly which product IDs it failed to fetch and why.
-    /// (Nâng lên `.verbose` khi product hoặc entitlement không load được — RevenueCat sẽ in rõ
-    ///  product ID nào fetch lỗi và vì sao.)
-    public let logLevel: TNLogLevel
-
-    /// All product IDs across all entitlements (flattened for StoreKit lookup).
-    var allProductIDs: Set<String> {
-        entitlements.reduce(into: Set<String>()) { $0.formUnion($1.productIDs) }
-    }
-    
-    /// All entitlement IDs (for RevenueCat lookup).
-    var allEntitlementIDs: [String] {
-        entitlements.map(\.id)
-    }
-    
-    /// - Parameters:
-    ///   - apiKey: Your RevenueCat API key.
-    ///   - entitlements: Array of entitlements, each with its product IDs.
-    ///   - isIAPEnabled: Set to `false` during development to bypass paywall. Default is `true`.
-    ///   - enableBackendIdentitySync: Set to `true` if your app uses a custom Backend/Proxy. Default is `false`.
-    ///   - logLevel: Diagnostic verbosity. Default is `.info` in DEBUG, `.error` in Release.
-    public init(
-        apiKey: String,
-        entitlements: [TNEntitlement],
-        isIAPEnabled: Bool = true,
-        enableBackendIdentitySync: Bool = false,
-        logLevel: TNLogLevel = .default
-    ) {
-        self.apiKey = apiKey
-        self.entitlements = entitlements
-        self.isIAPEnabled = isIAPEnabled
-        self.enableBackendIdentitySync = enableBackendIdentitySync
-        self.logLevel = logLevel
-    }
-    
-    /// Convenience initializer for apps with a single entitlement.
-    ///
-    /// ```swift
-    /// TNSubscriptionConfig(
-    ///     apiKey: "appl_xxx",
-    ///     entitlementId: "Premium",
-    ///     productIDs: ["com.app.weekly", "com.app.yearly"]
-    /// )
-    /// ```
-    public init(
-        apiKey: String,
-        entitlementId: String = "Premium",
-        productIDs: Set<String>,
-        isIAPEnabled: Bool = true,
-        enableBackendIdentitySync: Bool = false,
-        logLevel: TNLogLevel = .default
-    ) {
-        self.apiKey = apiKey
-        self.entitlements = [TNEntitlement(id: entitlementId, productIDs: productIDs)]
-        self.isIAPEnabled = isIAPEnabled
-        self.enableBackendIdentitySync = enableBackendIdentitySync
-        self.logLevel = logLevel
-    }
-}
+/// The engine-neutral name for this engine's entry point. Code that uses only the shared
+/// configuration and the common API compiles against any engine unchanged; the exact list is in
+/// README, "What is the same, what differs", and is enforced by `TNEngineContractTests`.
+/// (Tên trung lập cho điểm vào của engine này. Code chỉ dùng cấu hình chung và phần API chung thì
+/// compile được với mọi engine mà không phải sửa; danh sách chính xác nằm trong README, mục "What is
+/// the same, what differs", và được `TNEngineContractTests` bảo đảm.)
+public typealias TNSubscription = TNSubscriptionIOS
 
 // MARK: - TNSubscriptionIOS (Public API)
 
@@ -206,10 +114,15 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
 
         // 2. Surface misconfiguration before it turns into an empty paywall.
         validateAPIKey(apiKey, isIAPEnabled: config.isIAPEnabled)
+        for warning in config.ignoredSettings(for: .revenueCat) {
+            TNLog.warn(warning)
+        }
 
         // Configure RevenueCat when a non-empty API key is provided
         if !apiKey.isEmpty {
-            Purchases.configure(withAPIKey: apiKey)
+            // `customerUserId` becomes RevenueCat's App User ID; `nil` keeps the user anonymous.
+            let appUserID = config.customerUserId.flatMap { $0.isEmpty ? nil : $0 }
+            Purchases.configure(withAPIKey: apiKey, appUserID: appUserID)
             TNLog.info("RevenueCat configured. entitlements=[\(config.allEntitlementIDs.joined(separator: ", "))], productIDs=\(config.allProductIDs.sorted())")
         } else {
             TNLog.warn("No API key provided — RevenueCat is NOT configured. Offerings and purchases will be unavailable.")
@@ -368,6 +281,15 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
         }
     }
     
+    /// **Test-only.** Drops the singleton so another `configure(config:)` can run, matching the
+    /// other two engines so one contract test can drive all three.
+    /// (**Chỉ dùng cho test.** Bỏ singleton để có thể gọi `configure(config:)` lần nữa, giống hai
+    /// engine kia, để một test contract chạy được cho cả ba.)
+    internal static func resetForTesting() {
+        shared?.updatesTask?.cancel()
+        shared = nil
+    }
+
     deinit {
         updatesTask?.cancel()
     }
@@ -792,7 +714,10 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     /// Loads available offerings from RevenueCat.
     /// - Parameter offeringIdentifier: Optional specific offering identifier (e.g., `"sale"`). Defaults to `nil` (uses `offerings.current`).
     @MainActor
-    public func loadOfferings(offeringIdentifier: String? = nil) async {
+    public func loadOfferings(offeringIdentifier requestedIdentifier: String? = nil) async {
+        // Falls back to the config's default, so `currentOfferingIdentifier` means the same in
+        // every engine. `nil` in both keeps RevenueCat's dashboard *current* offering.
+        let offeringIdentifier = requestedIdentifier ?? config.currentOfferingIdentifier
         guard Purchases.isConfigured else {
             availablePackages = []
             offeringsError = NSLocalizedString("In-app purchases are not configured.", comment: "")

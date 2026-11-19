@@ -49,11 +49,22 @@ major and its paywall API (`getPaywall`) was replaced by `getFlow` in 4.x. (Adap
 | `offer(for:)` | `subscriptionOffer` (one, pre-selected) | discounts | every offer |
 | promotional offer signing | **Adapty server** | RevenueCat server | **your server** |
 
-Shared type names are identical across all three (`TNEntitlement`, `TNSubscriptionConfig`,
-`TNPackage`, `TNCustomerInfo`, `DefaultPaywallConfig`, `TNConsumableManager`, `TNLogLevel`), so
-switching engine is mostly an `import` swap. Never import two engines in one file. (Tên kiểu dùng
-chung giống hệt nhau ở cả ba, nên đổi engine gần như chỉ là đổi `import`. Đừng bao giờ import hai
-engine trong một file.)
+**The configuration is one shared type, not a copy.** `TNSubscriptionConfig`, `TNEntitlement`,
+`TNOffering`, `TNLogLevel`, `DefaultPaywallConfig` and `TNConsumableProduct` live in
+`TNSubscriptionShared`, re-exported by every engine, so they cannot differ. Every engine also
+exposes `TNSubscription` as an alias of its entry point. Code that uses only the shared config and
+the common API switches engine by changing only the `import` — see
+[README → "What is the same, what differs"](README.md#what-is-the-same-what-differs-cái-gì-giống-cái-gì-khác).
+The model types are **not** shared: `TNPackage`, `TNCustomerInfo` and `TNSubscriptionOffer` here are
+Adapty's own, and the RevenueCat engine uses RevenueCat's `Package` and `CustomerInfo`, so a custom
+paywall that lists packages must be rewritten when moving here from RevenueCat. Import one engine per
+app. (**Cấu hình là một kiểu dùng chung, không
+phải bản sao.** Các kiểu cấu hình nằm trong `TNSubscriptionShared`, được mọi engine re-export, nên
+không thể khác nhau. Mọi engine cũng có `TNSubscription` làm alias cho điểm vào. Code chỉ dùng config
+chung và phần API chung thì đổi engine chỉ cần đổi `import`. Các kiểu model thì **không** dùng chung:
+`TNPackage`, `TNCustomerInfo`, `TNSubscriptionOffer` ở đây là của riêng Adapty, còn engine RevenueCat
+dùng `Package` và `CustomerInfo` của RevenueCat — nên paywall tự viết có liệt kê gói phải viết lại khi
+chuyển từ RevenueCat sang. Mỗi app chỉ import một engine.)
 
 ---
 
@@ -62,22 +73,30 @@ engine trong một file.)
 ```swift
 import TNSubscriptionAdapty
 
-TNSubscriptionAdapty.configure(config: TNSubscriptionConfig(
+TNSubscription.configure(config: TNSubscriptionConfig(
     apiKey: "public_live_xxxxxxxx.xxxxxxxxxxxxxxxxxxxx",
     entitlements: [
         // `id` must match the Adapty access level EXACTLY — the default is lowercase "premium".
         // (`id` phải khớp CHÍNH XÁC access level trên Adapty — mặc định là "premium" viết thường.)
         TNEntitlement(id: "premium", productIDs: ["com.app.weekly", "com.app.yearly"]),
     ],
-    defaultPlacementId: "main"
+    currentOfferingIdentifier: "main"   // an Adapty placement ID
 ))
 ```
 
 - **`apiKey`** — the *public* SDK key, `public_live_…`. (Key SDK *public*, dạng `public_live_…`.)
 - **`productIDs`** — not needed online; they power the offline fallback (§5).
   (Không cần khi online; chúng phục vụ phương án offline — xem §5.)
-- **`defaultPlacementId`** — the placement a paywall shows when it does not name one.
-  (Placement mà paywall hiển thị khi không chỉ định.)
+- **`currentOfferingIdentifier`** — for Adapty, the **placement ID** a paywall shows when it does
+  not name one. Same field as the other engines; only what it names differs. (Với Adapty, đây là
+  **placement ID** mà paywall hiển thị khi không chỉ định. Cùng trường với các engine khác; chỉ khác
+  ở thứ mà nó trỏ tới.)
+- The convenience initialiser defaults `entitlementId` to `"Premium"` in every engine, but Adapty's
+  default access level is lowercase `"premium"` — pass it explicitly. (Initializer tiện lợi mặc định
+  `entitlementId` là `"Premium"` ở mọi engine, nhưng access level mặc định của Adapty là `"premium"`
+  viết thường — hãy truyền tường minh.)
+- `offerings:` and `enableBackendIdentitySync:` are ignored here, with a warning at `configure`.
+  (`offerings:` và `enableBackendIdentitySync:` bị bỏ qua ở đây, kèm cảnh báo lúc `configure`.)
 
 ---
 
@@ -178,14 +197,28 @@ the published state on their own. (Thay đổi profile — gia hạn, hoàn ti�
 5. **Consumable balances carry over**: this target reads the same Keychain keys and dedup list as
    the RevenueCat target. (**Số dư consumable được giữ nguyên**: target này đọc cùng Keychain key và
    danh sách chống trùng với target RevenueCat.)
+6. **Rewrite custom paywall code that touches packages.** RevenueCat's `Package` becomes `TNPackage`
+   (`package.storeProduct.localizedPriceString` → `package.localizedPriceString`), `CustomerInfo`
+   becomes `TNCustomerInfo`, and `introOffer(for:)` returns `TNSubscriptionOffer` instead of
+   `StoreProductDiscount`. The built-in paywall and the common API need no change.
+   (**Viết lại code paywall tự viết có đụng tới gói.** `Package` của RevenueCat thành `TNPackage`,
+   `CustomerInfo` thành `TNCustomerInfo`, và `introOffer(for:)` trả về `TNSubscriptionOffer` thay vì
+   `StoreProductDiscount`. Paywall có sẵn và phần API chung không cần sửa gì.)
+7. `TNInAppCurrencyManager` (RevenueCat cloud currency) has no Adapty equivalent. Those balances
+   live on RevenueCat's servers, not on the device, so export them to your own backend first, then
+   use `TNConsumableManager` with `configureSpendHandler(_:)` against that backend.
+   (`TNInAppCurrencyManager` không có tương đương bên Adapty. Các số dư đó nằm trên server của
+   RevenueCat chứ không nằm trên máy, nên phải xuất chúng sang backend của bạn trước, rồi dùng
+   `TNConsumableManager` cùng `configureSpendHandler(_:)` với backend đó.)
 
 ### From `TNSubscriptionCore` (Từ Core)
 
-Add `apiKey:`, drop `offerings:` (they move to Adapty placements), and drop
-`configurePromotionalOfferSigner` — Adapty signs. Consumable balances are migrated once from
-Core's keys. (Thêm `apiKey:`, bỏ `offerings:` (chuyển thành placement của Adapty), và bỏ
-`configurePromotionalOfferSigner` — Adapty tự ký. Số dư consumable được migrate một lần từ key
-của Core.)
+Add `apiKey:` to the same config. `offerings:` can stay but is ignored with a warning — recreate
+them as Adapty placements. Drop `configurePromotionalOfferSigner`: Adapty signs. Consumable balances
+are migrated once from Core's keys. (Thêm `apiKey:` vào cùng config đó. `offerings:` để nguyên cũng
+được nhưng sẽ bị bỏ qua kèm cảnh báo — hãy tạo lại thành placement trên Adapty. Bỏ
+`configurePromotionalOfferSigner`: Adapty tự ký. Số dư consumable được migrate một lần từ key của
+Core.)
 
 Purchases themselves are never lost on any switch: the source of truth is the Apple ID. Until
 Adapty has seen a user's existing App Store history, the offline fallback (§5) still unlocks them
@@ -252,6 +285,10 @@ xcodebuild test -scheme TNSubscriptionIOS-Package \
   -destination 'platform=iOS Simulator,name=iPhone 17' \
   -only-testing:TNSubscriptionAdaptyTests
 ```
+
+35 tests in 6 suites, including the engine contract (`TNEngineContractTests`), which proves this
+engine exposes the same configuration and common API as the other two. (35 test trong 6 suite, gồm
+cả test contract, chứng minh engine này có cùng cấu hình và API chung với hai engine kia.)
 
 Adapty's models have no public initialisers and its calls need a real key, so the mapping rules
 were pulled into pure functions and tested directly: API key classification, store / period /

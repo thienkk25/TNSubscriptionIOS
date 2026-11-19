@@ -2,33 +2,7 @@ import Foundation
 import StoreKit
 import Combine
 
-// MARK: - TNConsumableProduct
-
-/// A consumable product definition with its reward amount.
-/// (Định nghĩa sản phẩm consumable cùng số lượng reward.)
-///
-/// ```swift
-/// TNConsumableProduct(id: "com.app.100coins", reward: 100, currency: "coins")
-/// ```
-public struct TNConsumableProduct: Hashable, Sendable {
-    /// The StoreKit product ID.
-    /// (Product ID của StoreKit.)
-    public let id: String
-
-    /// How much of `currency` to credit on a successful purchase.
-    /// (Số lượng `currency` được cộng khi mua thành công.)
-    public let reward: Int
-
-    /// The currency bucket this pack credits (e.g. `"coins"`, `"gems"`).
-    /// (Loại tiền mà gói này cộng vào, ví dụ `"coins"`, `"gems"`.)
-    public let currency: String
-
-    public init(id: String, reward: Int, currency: String) {
-        self.id = id
-        self.reward = reward
-        self.currency = currency
-    }
-}
+// `TNConsumableProduct` lives in TNSubscriptionShared. (`TNConsumableProduct` nằm trong TNSubscriptionShared.)
 
 // MARK: - Storage Keys
 

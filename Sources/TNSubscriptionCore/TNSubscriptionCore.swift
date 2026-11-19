@@ -4,6 +4,21 @@ import StoreKit
 import Combine
 import UIKit
 
+// MARK: - Shared Configuration
+
+// TNSubscriptionConfig, TNEntitlement, TNOffering, TNLogLevel, DefaultPaywallConfig and
+// TNConsumableProduct live in TNSubscriptionShared, so they are identical in every engine.
+// (Các kiểu cấu hình nằm trong TNSubscriptionShared, nên giống hệt nhau ở mọi engine.)
+@_exported import TNSubscriptionShared
+
+/// The engine-neutral name for this engine's entry point. Code that uses only the shared
+/// configuration and the common API compiles against any engine unchanged; the exact list is in
+/// README, "What is the same, what differs", and is enforced by `TNEngineContractTests`.
+/// (Tên trung lập cho điểm vào của engine này. Code chỉ dùng cấu hình chung và phần API chung thì
+/// compile được với mọi engine mà không phải sửa; danh sách chính xác nằm trong README, mục "What is
+/// the same, what differs", và được `TNEngineContractTests` bảo đảm.)
+public typealias TNSubscription = TNSubscriptionCore
+
 // MARK: - TNEntitlementSnapshot
 
 /// A lock-protected mirror of the entitlement state, living outside the main actor so
@@ -225,6 +240,9 @@ public final class TNSubscriptionCore: ObservableObject {
         }
 
         validate(config)
+        for warning in config.ignoredSettings(for: .storeKit) {
+            TNLog.warn(warning)
+        }
 
         shared = TNSubscriptionCore(config: config)
         TNLog.info("""

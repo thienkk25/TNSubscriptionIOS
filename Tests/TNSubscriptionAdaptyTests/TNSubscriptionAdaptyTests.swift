@@ -170,11 +170,16 @@ final class TNAdaptyPackageTests: XCTestCase {
 
 final class TNAdaptyConfigTests: XCTestCase {
 
-    func testConvenienceInitDefaultsToAdaptysLowercasePremium() {
-        let config = TNSubscriptionConfig(apiKey: "k", productIDs: ["a", "b"])
-        XCTAssertEqual(config.allEntitlementIDs, ["premium"], "Adapty's default access level is lowercase 'premium'.")
-        XCTAssertEqual(config.allProductIDs, ["a", "b"])
-        XCTAssertTrue(config.offlineStoreKitFallback, "The fallback is on by default so nobody is locked out offline.")
+    func testConvenienceInitUsesTheSharedDefaultSoAdaptyAppsMustNameTheirAccessLevel() {
+        // The config is shared by all three engines, so its default stays the released "Premium".
+        // Adapty's own default access level is lowercase "premium" — Adapty apps pass it explicitly.
+        let shared = TNSubscriptionConfig(apiKey: "k", productIDs: ["a", "b"])
+        XCTAssertEqual(shared.allEntitlementIDs, ["Premium"])
+
+        let adapty = TNSubscriptionConfig(apiKey: "k", entitlementId: "premium", productIDs: ["a", "b"])
+        XCTAssertEqual(adapty.allEntitlementIDs, ["premium"])
+        XCTAssertEqual(adapty.allProductIDs, ["a", "b"])
+        XCTAssertTrue(adapty.offlineStoreKitFallback, "The fallback is on by default so nobody is locked out offline.")
     }
 
     func testLogLevelMapsToAdaptyAndBack() {
@@ -234,7 +239,7 @@ final class TNAdaptyEngineTests: XCTestCase {
         TNSubscriptionAdapty.configure(config: TNSubscriptionConfig(
             apiKey: "appl_this_is_a_revenuecat_key",
             entitlements: [TNEntitlement(id: "premium", productIDs: ["com.app.yearly"])],
-            defaultPlacementId: "main"
+            currentOfferingIdentifier: "main"
         ))
         let engine = try XCTUnwrap(TNSubscriptionAdapty.shared)
 
@@ -249,7 +254,7 @@ final class TNAdaptyEngineTests: XCTestCase {
         TNSubscriptionAdapty.configure(config: TNSubscriptionConfig(
             apiKey: "",
             entitlements: [TNEntitlement(id: "premium")],
-            defaultPlacementId: "main"
+            currentOfferingIdentifier: "main"
         ))
         let engine = try XCTUnwrap(TNSubscriptionAdapty.shared)
 

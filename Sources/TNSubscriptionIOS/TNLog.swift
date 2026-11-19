@@ -1,58 +1,14 @@
 import Foundation
 import RevenueCat
 
-// MARK: - TNLogLevel
+// MARK: - TNLogLevel ↔ RevenueCat
 
-/// Severity levels for TNSubscriptionIOS diagnostics.
-/// (Các mức độ log cho TNSubscriptionIOS.)
-///
-/// Levels are ordered: a message is emitted only when its level is **at or above**
-/// the configured threshold. `.none` disables logging entirely.
-///
-/// ```swift
-/// TNSubscriptionIOS.logLevel = .verbose   // see everything, including RevenueCat SDK logs
-/// TNSubscriptionIOS.logLevel = .none      // silence
-/// ```
-public enum TNLogLevel: Int, Comparable, CustomStringConvertible, Sendable {
-    /// Every internal step, including each StoreKit transaction inspected.
-    case verbose = 0
-    /// Resolution details useful while debugging entitlement problems.
-    case debug = 1
-    /// Lifecycle milestones: configuration, unlocks, purchases, restores.
-    case info = 2
-    /// Misconfiguration and recoverable fallbacks.
-    case warn = 3
-    /// Failures only.
-    case error = 4
-    /// Logging disabled.
-    case none = 5
-
-    public static func < (lhs: TNLogLevel, rhs: TNLogLevel) -> Bool {
-        lhs.rawValue < rhs.rawValue
-    }
-
-    public var description: String {
-        switch self {
-        case .verbose: return "VERBOSE"
-        case .debug: return "DEBUG"
-        case .info: return "INFO"
-        case .warn: return "WARN"
-        case .error: return "ERROR"
-        case .none: return "NONE"
-        }
-    }
-
-    /// `.info` in `DEBUG` builds, `.error` in Release builds.
-    /// (`.info` khi build DEBUG, `.error` khi build Release.)
-    public static var `default`: TNLogLevel {
-        #if DEBUG
-        return .info
-        #else
-        return .error
-        #endif
-    }
+// `TNLogLevel` itself lives in TNSubscriptionShared; only the RevenueCat mapping is engine-specific.
+// (`TNLogLevel` nằm trong TNSubscriptionShared; chỉ phần map sang RevenueCat là riêng của engine.)
+extension TNLogLevel {
 
     /// The equivalent RevenueCat level, or `nil` when logging is disabled.
+    /// (Mức tương ứng của RevenueCat, hoặc `nil` khi tắt log.)
     var revenueCatLevel: RevenueCat.LogLevel? {
         switch self {
         case .verbose: return .verbose
@@ -64,8 +20,8 @@ public enum TNLogLevel: Int, Comparable, CustomStringConvertible, Sendable {
         }
     }
 
-    /// Maps a RevenueCat level onto a `TNLogLevel`, so SDK logs can be forwarded
-    /// to the host app's log handler.
+    /// Maps a RevenueCat level onto a `TNLogLevel`, so SDK logs reach the host app's handler.
+    /// (Map một mức của RevenueCat sang `TNLogLevel`, để log của SDK tới được handler của app.)
     init(revenueCatLevel: RevenueCat.LogLevel) {
         switch revenueCatLevel {
         case .verbose: self = .verbose

@@ -2,7 +2,7 @@
 
 A reusable Swift Package for iOS subscription management, with **three interchangeable billing engines** behind one API: RevenueCat, Adapty, or pure Apple StoreKit 2. (Gói Swift Package tái sử dụng cho quản lý subscription iOS, với **ba engine thanh toán thay thế được cho nhau** dưới cùng một API: RevenueCat, Adapty, hoặc thuần Apple StoreKit 2.)
 
-- **Pick the engine per app** — the public API is the same, so switching is mostly an `import` swap (**Chọn engine theo từng app** — API công khai giống nhau, nên đổi engine gần như chỉ là đổi `import`)
+- **Pick the engine per app** — configuration and the common API are identical in all three; see [what is the same and what differs](#what-is-the-same-what-differs-cái-gì-giống-cái-gì-khác) (**Chọn engine theo từng app** — cấu hình và phần API chung giống hệt nhau ở cả ba; xem [cái gì giống, cái gì khác](#what-is-the-same-what-differs-cái-gì-giống-cái-gì-khác))
 - Built-in paywall UI **or** bring your own custom paywall (Paywall có sẵn **hoặc** tự custom hoàn toàn)
 - **Multiple entitlements** support (Hỗ trợ **nhiều entitlements**)
 - **Introductory and promotional offers**, plus App Store offer codes; iOS 18 **win-back** offers in `TNSubscriptionCore` and `TNSubscriptionAdapty` (Ưu đãi **người mới và promotional**, cùng offer code của App Store; ưu đãi **win-back** của iOS 18 trong `TNSubscriptionCore` và `TNSubscriptionAdapty`)
@@ -16,9 +16,46 @@ A reusable Swift Package for iOS subscription management, with **three interchan
 Each engine is a separate library product that links exactly one billing SDK — or none.
 (Mỗi engine là một library product riêng, chỉ link đúng một SDK thanh toán — hoặc không SDK nào.)
 
+**The configuration is shared, not copied.** `TNSubscriptionConfig`, `TNEntitlement`, `TNOffering`,
+`TNLogLevel`, `DefaultPaywallConfig` and `TNConsumableProduct` are a single type each, re-exported by
+every engine, and every engine names its entry point `TNSubscription` too. So this setup is the
+same whichever engine you import:
+(**Cấu hình được dùng chung, không phải sao chép.** Mỗi kiểu cấu hình chỉ có một bản duy nhất, được
+mọi engine re-export, và engine nào cũng có điểm vào tên `TNSubscription`. Vì vậy đoạn cấu hình này
+giống hệt nhau dù bạn import engine nào:)
+
+```swift
+import TNSubscriptionIOS        // or TNSubscriptionAdapty, or TNSubscriptionCore
+
+TNSubscription.configure(config: TNSubscriptionConfig(
+    apiKey: "…",                // ignored (with a warning) by Core
+    entitlements: [TNEntitlement(id: "Premium", productIDs: ["com.app.weekly", "com.app.yearly"])],
+    currentOfferingIdentifier: "main"
+))
+
+if TNSubscription.shared.isPremium { … }
+TNSubscription.presentDefaultPaywall(from: viewController, config: DefaultPaywallConfig(appName: "My App"))
+```
+
+A setting an engine cannot honour — say `observerMode` on RevenueCat — is ignored and logged at
+`configure`, never silently dropped. (Thiết lập nào engine không áp dụng được — ví dụ `observerMode`
+trên RevenueCat — sẽ bị bỏ qua và ghi log lúc `configure`, không bao giờ âm thầm bị bỏ.)
+
 - **`TNSubscriptionIOS`** — RevenueCat. Documented in the rest of this README. (RevenueCat. Được mô tả trong phần còn lại của README này.)
 - **`TNSubscriptionAdapty`** — Adapty: access levels, A/B-tested placements, server-signed offers. See [ADAPTY.md](ADAPTY.md). (Adapty: access level, placement có A/B test, ưu đãi ký phía server. Xem [ADAPTY.md](ADAPTY.md).)
 - **`TNSubscriptionCore`** — pure Apple StoreKit 2, zero dependencies, no API key. See [CORE.md](CORE.md). (Thuần Apple StoreKit 2, không dependency, không API key. Xem [CORE.md](CORE.md).)
+
+**Which one? (Chọn cái nào?)**
+
+- **iOS-only app, no vendor account wanted, works offline** → `TNSubscriptionCore`.
+  (App chỉ có iOS, không muốn tài khoản bên thứ ba, cần chạy offline → `TNSubscriptionCore`.)
+- **Subscriptions shared with Android or the web, or you want revenue charts** → `TNSubscriptionIOS`
+  or `TNSubscriptionAdapty`. (Subscription dùng chung với Android hoặc web, hoặc cần biểu đồ doanh thu
+  → `TNSubscriptionIOS` hoặc `TNSubscriptionAdapty`.)
+- **A/B-testing paywalls from a dashboard** → `TNSubscriptionAdapty`.
+  (A/B test paywall từ dashboard → `TNSubscriptionAdapty`.)
+- **Already on RevenueCat, or need cloud-synced virtual currency** → `TNSubscriptionIOS`.
+  (Đang dùng RevenueCat, hoặc cần tiền tệ ảo đồng bộ cloud → `TNSubscriptionIOS`.)
 
 | | `TNSubscriptionIOS` | `TNSubscriptionCore` | `TNSubscriptionAdapty` |
 |---|---|---|---|
@@ -33,6 +70,78 @@ Each engine is a separate library product that links exactly one billing SDK —
 > **Xcode 26+ is required to resolve this package** (Adapty 4.x needs Swift tools 6.2). App Store
 > Connect has required Xcode 26 builds since 28 April 2026. (**Cần Xcode 26+ để resolve package này**
 > (Adapty 4.x cần Swift tools 6.2). App Store Connect đã bắt buộc build bằng Xcode 26 từ 28/04/2026.)
+
+### What is the same, what differs (Cái gì giống, cái gì khác)
+
+**Identical in all three engines.** Everything in this table is enforced by a contract test
+(`TNEngineContractTests`) that is compiled against each engine — if one engine drifts, its build
+fails. Code that sticks to this table switches engine by changing only the `import`.
+(**Giống hệt nhau ở cả ba engine.** Mọi thứ trong bảng này được bảo đảm bằng một test contract
+(`TNEngineContractTests`) compile với từng engine — engine nào lệch thì build của nó fail. Code chỉ
+dùng những gì trong bảng này thì đổi engine chỉ cần đổi `import`.)
+
+| Area (Nhóm) | API |
+|---|---|
+| Configuration (Cấu hình) | `TNSubscriptionConfig`, `TNEntitlement`, `TNOffering`, `TNLogLevel` |
+| Entry point (Điểm vào) | `TNSubscription.configure(config:)`, `TNSubscription.shared` |
+| Status (Trạng thái) | `isPremium`, `activeEntitlements`, `entitlementState`, `hasEntitlement(_:)`, `productIDs(for:)`, `currentPlanProductID`, `currentPlanDisplayName`, `currentProductID(for:)`, `entitlementError` |
+| Loading & actions (Tải & thao tác) | `checkSubscriptionStatus()`, `resolveEntitlement()`, `fetchOfferings(offeringIdentifier:)`, `loadOfferings(offeringIdentifier:)`, `isLoadingOfferings`, `offeringsError`, `isPurchasing`, `restorePurchases(completion:)`, `restorePurchasesAsync()`, `presentOfferCodeRedemption()` |
+| Paywall | `DefaultPaywallConfig`, `TNDefaultPaywallView`, `TNSubscription.presentDefaultPaywall(from:config:)`, `TNSubscription.presentPaywall(from:content:)` |
+| Consumables | `TNConsumableProduct`, `TNConsumableManager.configure(products:)`, `loadProducts()`, `purchaseAsync(productId:)`, `balance(for:)`, `canAfford(_:currency:)`, `addBalance(_:for:)`, `deductBalance(_:for:)`, `setBalance(_:for:)` |
+| Identity & logs (Danh tính & log) | `TNSubscription.clientId`, `deviceId`, `identityHeaders(userId:)`, `displayName(forProductID:)`, `logLevel`, `logHandler` |
+
+**Different between engines.** (Khác nhau giữa các engine.)
+
+**1. Packages, purchases and customer info.** `TNSubscriptionIOS` exposes RevenueCat's own types;
+the other two use the package's types. This was kept on purpose, so existing RevenueCat apps did not
+break. (**Gói, giao dịch mua và thông tin khách hàng.** `TNSubscriptionIOS` dùng kiểu của chính
+RevenueCat; hai engine còn lại dùng kiểu của package. Giữ nguyên có chủ đích, để các app RevenueCat
+đang chạy không bị vỡ build.)
+
+| API | `TNSubscriptionIOS` | `TNSubscriptionCore` / `TNSubscriptionAdapty` |
+|---|---|---|
+| `availablePackages` | `[Package]` (RevenueCat) | `[TNPackage]` |
+| `customerInfo` | `CustomerInfo?` (RevenueCat) | `TNCustomerInfo?` |
+| `purchaseAsync(package:)` | takes `Package`, returns `CustomerInfo` | takes `TNPackage`, returns `TNCustomerInfo` |
+| `introOffer(for:)` | `StoreProductDiscount?` | `TNSubscriptionOffer?` |
+| `introEligibility` | `[String: IntroEligibilityStatus]` | `[String: TNIntroEligibilityStatus]` |
+
+Core's and Adapty's `TNPackage` / `TNCustomerInfo` are also two separate types: their common
+properties have the same names (`productIdentifier`, `localizedPriceString`, `packageType`,
+`pricePerMonth`, `entitlements`, …), so most code carries over, but each adds engine-specific
+properties and the contract test does not cover them. (`TNPackage` / `TNCustomerInfo` của Core và
+Adapty cũng là hai kiểu riêng: các thuộc tính chung trùng tên nên phần lớn code dùng lại được,
+nhưng mỗi bên có thuộc tính riêng và test contract không bao phủ phần này.)
+
+**2. Features only some engines have.** (Tính năng chỉ một số engine có.)
+
+| Feature (Tính năng) | RevenueCat | Core | Adapty |
+|---|---|---|---|
+| Cloud virtual currency — `TNInAppCurrencyManager` | ✅ | — | — |
+| `entitlementInfo(for:)` — expiry, renewal, billing issues | — | ✅ | ✅ |
+| `showManageSubscriptions()`, `requestRefund(for:)` | — | ✅ | ✅ |
+| `cachedIsPremium` — read from a background thread without `await` | — | ✅ | ✅ |
+| `currentOfferingMetadata` | — | ✅ | ✅ |
+| `updateOfferings(_:current:)`, `configurePromotionalOfferSigner(_:)` | — | ✅ | — |
+| `identify(_:)`, `logout()`, `logPaywallShown()`, `offer(for:)` | — | — | ✅ |
+| Server-authoritative spending (Tiêu qua server) | on `TNInAppCurrencyManager` | on `TNConsumableManager` | on `TNConsumableManager` |
+
+**3. Concurrency.** `TNSubscriptionCore` and `TNSubscriptionAdapty` are `@MainActor`; call them with
+`await` from background code, or read `cachedIsPremium`. `TNSubscriptionIOS` is not main-actor
+isolated. (**Concurrency.** `TNSubscriptionCore` và `TNSubscriptionAdapty` là `@MainActor`; gọi từ
+background thì dùng `await`, hoặc đọc `cachedIsPremium`. `TNSubscriptionIOS` không bị cô lập trên
+main actor.)
+
+**Rule of thumb.** (Quy tắc dễ nhớ.)
+
+- Only the "identical" table above → switching engine is an `import` change.
+  (Chỉ dùng bảng "giống hệt" ở trên → đổi engine chỉ là đổi `import`.)
+- A custom paywall that lists packages or reads `customerInfo` → that part needs rewriting when moving
+  to or from RevenueCat; between Core and Adapty it mostly carries over.
+  (Paywall tự viết có liệt kê gói hoặc đọc `customerInfo` → phần đó phải viết lại khi chuyển sang hoặc
+  rời RevenueCat; giữa Core và Adapty thì phần lớn dùng lại được.)
+- An engine-only feature → rewrite or remove it.
+  (Tính năng riêng của một engine → viết lại hoặc bỏ đi.)
 
 ---
 
@@ -67,6 +176,13 @@ Drag the `TNSubscriptionIOS` folder into your Xcode project, then: (Kéo thư m�
 **Target → General → Frameworks → Add → TNSubscriptionIOS**
 
 ---
+
+> **Sections 1–8 below document `TNSubscriptionIOS` (RevenueCat).** The configuration and everything
+> in [the identical table](#what-is-the-same-what-differs-cái-gì-giống-cái-gì-khác) work the same on every engine. For anything else, see
+> [ADAPTY.md](ADAPTY.md) or [CORE.md](CORE.md).
+> (**Mục 1–8 dưới đây là tài liệu cho `TNSubscriptionIOS` (RevenueCat).** Phần cấu hình và mọi thứ
+> trong [bảng giống hệt](#what-is-the-same-what-differs-cái-gì-giống-cái-gì-khác) dùng y như nhau ở mọi engine. Phần còn lại xem
+> [ADAPTY.md](ADAPTY.md) hoặc [CORE.md](CORE.md).)
 
 ## 1. Configure (Cấu hình)
 
@@ -1000,14 +1116,90 @@ let rcKey = "appl_YOUR_APP_STORE_KEY"
 
 ---
 
+## For maintainers (Dành cho người bảo trì)
+
+### Package layout (Cấu trúc package)
+
+```
+Sources/
+  TNSubscriptionShared/   config types shared by every engine — no dependencies, not a product
+  TNSubscriptionIOS/      RevenueCat engine    → depends on Shared + RevenueCat
+  TNSubscriptionCore/     StoreKit 2 engine    → depends on Shared only
+  TNSubscriptionAdapty/   Adapty engine        → depends on Shared + Adapty
+Tests/
+  TNSubscriptionIOSTests/    TNSubscriptionCoreTests/    TNSubscriptionAdaptyTests/
+    └─ each contains TNEngineContractTests.swift (identical except its import line)
+IntegrationTests/         Xcode host app + .storekit file — real purchases for TNSubscriptionCore
+```
+
+### Rules (Quy tắc)
+
+- **A configuration type goes in `TNSubscriptionShared`, never in an engine.** Copies in each engine
+  are how the three drifted apart before. (**Kiểu cấu hình đặt trong `TNSubscriptionShared`, không bao
+  giờ đặt trong engine.** Mỗi engine giữ một bản sao chính là lý do ba engine từng lệch nhau.)
+- **A new config field** goes into `TNSubscriptionConfig` with a default value, appended after the
+  existing parameters so released call sites keep compiling. If an engine cannot honour it, add it to
+  `ignoredSettings(for:)` so that engine logs a warning instead of silently ignoring it.
+  (**Trường config mới** thêm vào `TNSubscriptionConfig` kèm giá trị mặc định, đặt sau các tham số
+  hiện có để code đã phát hành vẫn compile. Engine nào không áp dụng được thì thêm vào
+  `ignoredSettings(for:)` để engine đó ghi cảnh báo thay vì âm thầm bỏ qua.)
+- **A new API meant to be common to all engines** must be added to all three, and to
+  `TNEngineContractTests`, and to the "identical" table above. Edit the three contract files together —
+  they must stay identical except for the `import` line.
+  (**API mới dùng chung cho mọi engine** phải được thêm vào cả ba engine, vào `TNEngineContractTests`,
+  và vào bảng "giống hệt" ở trên. Sửa cả ba file contract cùng lúc — chúng phải giống hệt nhau, chỉ
+  khác dòng `import`.)
+- **An app imports exactly one engine.** Each engine links a different billing SDK, and the engine
+  classes clash on the `TNSubscription` name. (**Mỗi app chỉ import đúng một engine.**)
+
+### Running the tests (Chạy test)
+
+Unit and contract tests for all three engines — this is what CI runs on `macos-26`:
+(Unit test và test contract cho cả ba engine — đây là thứ CI chạy trên `macos-26`:)
+
+```bash
+xcodebuild test -scheme TNSubscriptionIOS-Package -destination 'platform=iOS Simulator,name=iPhone 17'
+```
+
+Use the `-Package` scheme: the per-product schemes have no test action.
+StoreKit integration tests for `TNSubscriptionCore` need a host app, so they live in their own
+project (see [CORE.md §9](CORE.md)) and are not run by CI.
+(Dùng scheme `-Package`: các scheme theo từng product không có test action. Integration test StoreKit
+của `TNSubscriptionCore` cần host app nên nằm trong project riêng, và CI không chạy chúng.)
+
+```bash
+cd IntegrationTests && xcodegen generate
+```
+
+---
+
 ## API Reference (Tham chiếu API)
 
 ### `TNSubscriptionConfig`
 
-| Initializer | Parameters |
-|---|---|
-| Multi-entitlement (Nhiều entitlements) | `apiKey`, `entitlements: [TNEntitlement]`, `isIAPEnabled`, `enableBackendIdentitySync`, `logLevel` |
-| Single-entitlement (1 entitlement) | `apiKey`, `entitlementId`, `productIDs: Set<String>`, `isIAPEnabled`, `enableBackendIdentitySync`, `logLevel` |
+One shared type for every engine. All parameters except `entitlements` have defaults.
+(Một kiểu dùng chung cho mọi engine. Mọi tham số trừ `entitlements` đều có giá trị mặc định.)
+
+| Parameter | Default | RevenueCat | Adapty | Core |
+|---|---|---|---|---|
+| `apiKey` | `""` | ✅ `appl_…` | ✅ `public_live_…` | — |
+| `entitlements` | *(required)* | ✅ | ✅ | ✅ |
+| `offerings` | `[]` | — | — | ✅ |
+| `currentOfferingIdentifier` | `nil` | ✅ offering ID | ✅ placement ID | ✅ |
+| `customerUserId` | `nil` | ✅ | ✅ | — |
+| `isIAPEnabled` | `true` | ✅ | ✅ | ✅ |
+| `enableBackendIdentitySync` | `false` | ✅ | — | — |
+| `observerMode` | `false` | — | ✅ | — |
+| `attachAppAccountToken` | `false` | — | ✅ | ✅ |
+| `offlineStoreKitFallback` | `true` | always on | ✅ | always on |
+| `logLevel` | `.default` | ✅ | ✅ | ✅ |
+
+"—" means the engine ignores the setting and logs a warning at `configure` if it is set.
+The single-entitlement initialiser takes `entitlementId:` (default `"Premium"`) and
+`productIDs:` instead of `entitlements:`.
+("—" nghĩa là engine bỏ qua thiết lập đó và ghi cảnh báo lúc `configure` nếu nó được đặt.
+Initializer cho một quyền lợi nhận `entitlementId:` (mặc định `"Premium"`) và `productIDs:` thay cho
+`entitlements:`.)
 
 ### `TNLogLevel`
 
@@ -1017,7 +1209,7 @@ let rcKey = "appl_YOUR_APP_STORE_KEY"
 
 | Property | Type | Description (Mô tả) |
 |---|---|---|
-| `id` | `String` | Entitlement ID in RevenueCat (ID entitlement trong RevenueCat) |
+| `id` | `String` | RevenueCat entitlement ID / Adapty access level ID / your own name in Core — must match exactly, including case (ID entitlement của RevenueCat / access level của Adapty / tên tự đặt ở Core — phải khớp chính xác, kể cả hoa/thường) |
 | `productIDs` | `Set<String>` | StoreKit Product IDs for this entitlement (Product IDs thuộc entitlement này) |
 
 ### `TNSubscriptionIOS.shared`

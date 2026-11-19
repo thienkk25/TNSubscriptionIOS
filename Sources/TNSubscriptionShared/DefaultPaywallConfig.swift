@@ -2,13 +2,13 @@ import SwiftUI
 
 // MARK: - DefaultPaywallConfig
 
-/// Configuration for the built-in paywall.
-/// (Cấu hình cho paywall có sẵn.)
+/// Configuration for the built-in paywall — the same type in every engine.
+/// (Cấu hình cho paywall có sẵn — cùng một kiểu ở mọi engine.)
 ///
-/// Pass it to `TNSubscriptionCore.presentDefaultPaywall(from:config:)`, or to
+/// Pass it to `TNSubscription.presentDefaultPaywall(from:config:)`, or to
 /// `TNDefaultPaywallView(config:)` in SwiftUI. Every field has a sensible default, so you
 /// only set what you want to change.
-/// (Truyền vào `TNSubscriptionCore.presentDefaultPaywall(from:config:)`, hoặc
+/// (Truyền vào `TNSubscription.presentDefaultPaywall(from:config:)`, hoặc
 /// `TNDefaultPaywallView(config:)` trong SwiftUI. Mọi thuộc tính đều có giá trị mặc định hợp lý,
 /// nên bạn chỉ cần đặt những gì muốn đổi.)
 public struct DefaultPaywallConfig {
@@ -41,8 +41,10 @@ public struct DefaultPaywallConfig {
     /// (Danh sách tính năng premium hiển thị cho người dùng.)
     public var features: [Feature]
 
-    /// Which `TNOffering` to display (e.g. `"sale"`). `nil` uses the current offering.
-    /// (Hiển thị `TNOffering` nào, ví dụ `"sale"`. `nil` dùng offering hiện tại.)
+    /// Which offering to display. RevenueCat: an offering ID. Adapty: a **placement ID**. Core: a
+    /// `TNOffering` ID. `nil` uses `TNSubscriptionConfig.currentOfferingIdentifier`.
+    /// (Hiển thị offering nào. RevenueCat: offering ID. Adapty: **placement ID**. Core: ID của
+    /// `TNOffering`. `nil` dùng `TNSubscriptionConfig.currentOfferingIdentifier`.)
     public var offeringIdentifier: String?
 
     /// Which entitlement this paywall unlocks (e.g. `"Sale"`). `nil` checks `isPremium`,

@@ -35,18 +35,27 @@ let package = Package(
         .package(url: "https://github.com/adaptyteam/AdaptySDK-iOS.git", from: "4.4.0"),
     ],
     targets: [
+        // The configuration types every engine shares: TNSubscriptionConfig, TNEntitlement,
+        // TNOffering, TNLogLevel, DefaultPaywallConfig, TNConsumableProduct. One copy, so the
+        // three engines cannot drift apart — switching engine is only an `import` change.
+        // No dependencies, and not a product: each engine re-exports it.
+        .target(
+            name: "TNSubscriptionShared"
+        ),
         .target(
             name: "TNSubscriptionIOS",
             dependencies: [
+                "TNSubscriptionShared",
                 .product(name: "RevenueCat", package: "purchases-ios-spm"),
             ],
             resources: [
                 .process("PrivacyInfo.xcprivacy")
             ]
         ),
-        // NOTE: no `dependencies:` on purpose — this target must never link RevenueCat.
+        // NOTE: only the shared module — this target must never link a vendor SDK.
         .target(
             name: "TNSubscriptionCore",
+            dependencies: ["TNSubscriptionShared"],
             resources: [
                 .process("PrivacyInfo.xcprivacy")
             ]
@@ -56,6 +65,7 @@ let package = Package(
         .target(
             name: "TNSubscriptionAdapty",
             dependencies: [
+                "TNSubscriptionShared",
                 .product(name: "Adapty", package: "AdaptySDK-iOS"),
             ],
             resources: [

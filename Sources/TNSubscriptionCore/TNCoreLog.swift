@@ -1,75 +1,7 @@
 import Foundation
 import os
 
-// MARK: - TNLogLevel
-
-/// Severity levels for TNSubscriptionCore diagnostics.
-/// (Các mức độ log cho TNSubscriptionCore.)
-///
-/// Levels are ordered: a message is emitted only when its level is **at or above**
-/// the configured threshold. `.none` disables logging entirely.
-///
-/// ```swift
-/// TNSubscriptionCore.logLevel = .verbose   // see every StoreKit transaction inspected
-/// TNSubscriptionCore.logLevel = .none      // silence
-/// ```
-public enum TNLogLevel: Int, Comparable, CustomStringConvertible, Sendable {
-    /// Every internal step, including each StoreKit transaction inspected.
-    /// (Mọi bước nội bộ, kể cả từng giao dịch StoreKit được kiểm tra.)
-    case verbose = 0
-    /// Resolution details useful while debugging entitlement problems.
-    /// (Chi tiết quá trình xác định quyền lợi, hữu ích khi debug.)
-    case debug = 1
-    /// Lifecycle milestones: configuration, unlocks, purchases, restores.
-    /// (Các mốc vòng đời: cấu hình, mở khoá, mua, phục hồi.)
-    case info = 2
-    /// Misconfiguration and recoverable fallbacks.
-    /// (Lỗi cấu hình và các trường hợp phải dùng phương án dự phòng.)
-    case warn = 3
-    /// Failures only.
-    /// (Chỉ các lỗi thật sự.)
-    case error = 4
-    /// Logging disabled.
-    /// (Tắt log.)
-    case none = 5
-
-    public static func < (lhs: TNLogLevel, rhs: TNLogLevel) -> Bool {
-        lhs.rawValue < rhs.rawValue
-    }
-
-    public var description: String {
-        switch self {
-        case .verbose: return "VERBOSE"
-        case .debug: return "DEBUG"
-        case .info: return "INFO"
-        case .warn: return "WARN"
-        case .error: return "ERROR"
-        case .none: return "NONE"
-        }
-    }
-
-    /// `.info` in `DEBUG` builds, `.error` in Release builds.
-    /// (`.info` khi build DEBUG, `.error` khi build Release.)
-    public static var `default`: TNLogLevel {
-        #if DEBUG
-        return .info
-        #else
-        return .error
-        #endif
-    }
-
-    /// The matching unified-logging level, used when no custom handler is installed.
-    /// (Mức tương ứng trong unified logging, dùng khi chưa gắn handler riêng.)
-    var osLogType: OSLogType {
-        switch self {
-        case .verbose, .debug: return .debug
-        case .info: return .info
-        case .warn: return .default
-        case .error: return .error
-        case .none: return .debug
-        }
-    }
-}
+// `TNLogLevel` lives in TNSubscriptionShared. (`TNLogLevel` nằm trong TNSubscriptionShared.)
 
 // MARK: - TNLog
 

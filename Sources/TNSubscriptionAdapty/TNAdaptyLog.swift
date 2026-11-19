@@ -2,72 +2,11 @@ import Foundation
 import os
 import Adapty
 
-// MARK: - TNLogLevel
+// MARK: - TNLogLevel ↔ Adapty
 
-/// Severity levels for TNSubscriptionAdapty diagnostics, applied to both this package and the
-/// underlying Adapty SDK.
-/// (Các mức độ log cho TNSubscriptionAdapty, áp dụng cho cả package này lẫn Adapty SDK bên dưới.)
-///
-/// Levels are ordered: a message is emitted only when its level is **at or above** the
-/// configured threshold. `.none` disables logging entirely.
-/// (Các mức có thứ tự: một thông điệp chỉ được phát ra khi mức của nó **bằng hoặc cao hơn**
-/// ngưỡng đã cấu hình. `.none` tắt log hoàn toàn.)
-public enum TNLogLevel: Int, Comparable, CustomStringConvertible, Sendable {
-    /// Every internal step, including Adapty's own verbose output.
-    /// (Mọi bước nội bộ, kể cả log verbose của chính Adapty.)
-    case verbose = 0
-    /// Resolution details useful while debugging entitlement problems.
-    /// (Chi tiết quá trình xác định quyền lợi, hữu ích khi debug.)
-    case debug = 1
-    /// Lifecycle milestones: configuration, unlocks, purchases, restores.
-    /// (Các mốc vòng đời: cấu hình, mở khoá, mua, phục hồi.)
-    case info = 2
-    /// Misconfiguration and recoverable fallbacks.
-    /// (Lỗi cấu hình và các trường hợp phải dùng phương án dự phòng.)
-    case warn = 3
-    /// Failures only.
-    /// (Chỉ các lỗi thật sự.)
-    case error = 4
-    /// Logging disabled.
-    /// (Tắt log.)
-    case none = 5
-
-    public static func < (lhs: TNLogLevel, rhs: TNLogLevel) -> Bool {
-        lhs.rawValue < rhs.rawValue
-    }
-
-    public var description: String {
-        switch self {
-        case .verbose: return "VERBOSE"
-        case .debug: return "DEBUG"
-        case .info: return "INFO"
-        case .warn: return "WARN"
-        case .error: return "ERROR"
-        case .none: return "NONE"
-        }
-    }
-
-    /// `.info` in `DEBUG` builds, `.error` in Release builds.
-    /// (`.info` khi build DEBUG, `.error` khi build Release.)
-    public static var `default`: TNLogLevel {
-        #if DEBUG
-        return .info
-        #else
-        return .error
-        #endif
-    }
-
-    /// The matching unified-logging level, used when no custom handler is installed.
-    /// (Mức tương ứng trong unified logging, dùng khi chưa gắn handler riêng.)
-    var osLogType: OSLogType {
-        switch self {
-        case .verbose, .debug: return .debug
-        case .info: return .info
-        case .warn: return .default
-        case .error: return .error
-        case .none: return .debug
-        }
-    }
+// `TNLogLevel` itself lives in TNSubscriptionShared; only the Adapty mapping is engine-specific.
+// (`TNLogLevel` nằm trong TNSubscriptionShared; chỉ phần map sang Adapty là riêng của engine.)
+extension TNLogLevel {
 
     /// The equivalent Adapty level. Adapty has no "off" level, so `.none` maps to `.error`
     /// and is then silenced by the forwarding handler instead.
@@ -83,9 +22,8 @@ public enum TNLogLevel: Int, Comparable, CustomStringConvertible, Sendable {
         }
     }
 
-    /// Maps an Adapty level onto a `TNLogLevel`, so SDK logs can be forwarded to the host
-    /// app's log handler.
-    /// (Map một mức của Adapty sang `TNLogLevel`, để log của SDK được chuyển tới handler của app.)
+    /// Maps an Adapty level onto a `TNLogLevel`, so SDK logs reach the host app's handler.
+    /// (Map một mức của Adapty sang `TNLogLevel`, để log của SDK tới được handler của app.)
     init(adaptyLevel: AdaptyLog.Level) {
         switch adaptyLevel {
         case .verbose: self = .verbose

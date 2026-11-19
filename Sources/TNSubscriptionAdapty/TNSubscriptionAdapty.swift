@@ -5,6 +5,21 @@ import Combine
 import UIKit
 import Adapty
 
+// MARK: - Shared Configuration
+
+// TNSubscriptionConfig, TNEntitlement, TNOffering, TNLogLevel, DefaultPaywallConfig and
+// TNConsumableProduct live in TNSubscriptionShared, so they are identical in every engine.
+// (Các kiểu cấu hình nằm trong TNSubscriptionShared, nên giống hệt nhau ở mọi engine.)
+@_exported import TNSubscriptionShared
+
+/// The engine-neutral name for this engine's entry point. Code that uses only the shared
+/// configuration and the common API compiles against any engine unchanged; the exact list is in
+/// README, "What is the same, what differs", and is enforced by `TNEngineContractTests`.
+/// (Tên trung lập cho điểm vào của engine này. Code chỉ dùng cấu hình chung và phần API chung thì
+/// compile được với mọi engine mà không phải sửa; danh sách chính xác nằm trong README, mục "What is
+/// the same, what differs", và được `TNEngineContractTests` bảo đảm.)
+public typealias TNSubscription = TNSubscriptionAdapty
+
 // MARK: - TNEntitlementSnapshot
 
 /// A lock-protected mirror of the entitlement state, readable off the main actor.
@@ -67,7 +82,7 @@ final class TNAdaptyDelegateProxy: AdaptyDelegate {
 /// TNSubscriptionAdapty.configure(config: TNSubscriptionConfig(
 ///     apiKey: "public_live_xxxxx",
 ///     entitlements: [TNEntitlement(id: "premium", productIDs: ["com.app.weekly", "com.app.yearly"])],
-///     defaultPlacementId: "main"
+///     currentOfferingIdentifier: "main"
 /// ))
 ///
 /// if TNSubscriptionAdapty.shared.isPremium { ... }
@@ -170,11 +185,14 @@ public final class TNSubscriptionAdapty: ObservableObject {
             TNLog.error("\(keyProblem.explanation) Adapty will NOT be activated; entitlements fall back to local StoreKit and purchases are disabled.")
         }
         validate(config)
+        for warning in config.ignoredSettings(for: .adapty) {
+            TNLog.warn(warning)
+        }
 
         shared = TNSubscriptionAdapty(config: config, keyProblem: keyProblem)
         TNLog.info("""
         TNSubscriptionAdapty configured. accessLevels=\(config.allEntitlementIDs), \
-        defaultPlacement=\(config.defaultPlacementId ?? "none"), IAP=\(config.isIAPEnabled ? "on" : "off").
+        defaultPlacement=\(config.currentOfferingIdentifier ?? "none"), IAP=\(config.isIAPEnabled ? "on" : "off").
         """)
     }
 
@@ -210,8 +228,8 @@ public final class TNSubscriptionAdapty: ObservableObject {
                 TNLog.warn("Access level '\(entitlement.id)' has no productIDs, so the offline fallback can never unlock it. Add the product IDs that grant it.")
             }
         }
-        if config.defaultPlacementId == nil {
-            TNLog.info("No defaultPlacementId set; every paywall must pass a placement ID explicitly.")
+        if config.currentOfferingIdentifier == nil {
+            TNLog.info("No currentOfferingIdentifier set; every paywall must pass a placement ID explicitly.")
         }
     }
 
@@ -220,7 +238,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
     private init(config: TNSubscriptionConfig, keyProblem: TNAdaptyKeyProblem?) {
         self.config = config
         self.keyProblem = keyProblem
-        self.currentOfferingIdentifier = config.defaultPlacementId
+        self.currentOfferingIdentifier = config.currentOfferingIdentifier
 
         guard config.isIAPEnabled else {
             let all = Set(config.allEntitlementIDs)
@@ -558,8 +576,8 @@ public final class TNSubscriptionAdapty: ObservableObject {
     /// Loads an Adapty placement into `availablePackages`.
     /// (Tải một placement của Adapty vào `availablePackages`.)
     ///
-    /// - Parameter offeringIdentifier: The **placement ID**. `nil` uses `defaultPlacementId`.
-    ///   (**Placement ID**. `nil` dùng `defaultPlacementId`.)
+    /// - Parameter offeringIdentifier: The **placement ID**. `nil` uses `currentOfferingIdentifier`.
+    ///   (**Placement ID**. `nil` dùng `currentOfferingIdentifier`.)
     ///
     /// Packages keep the order set in the Adapty dashboard. Unlike `TNSubscriptionCore`, nothing
     /// is re-sorted: the order is part of what an Adapty A/B test varies.
@@ -585,10 +603,10 @@ public final class TNSubscriptionAdapty: ObservableObject {
             return
         }
 
-        guard let placementId = offeringIdentifier ?? config.defaultPlacementId, !placementId.isEmpty else {
+        guard let placementId = offeringIdentifier ?? config.currentOfferingIdentifier, !placementId.isEmpty else {
             availablePackages = []
             offeringsError = NSLocalizedString("Plans could not be loaded.", comment: "")
-            TNLog.error("loadOfferings needs a placement ID: pass one, or set TNSubscriptionConfig.defaultPlacementId.")
+            TNLog.error("loadOfferings needs a placement ID: pass one, or set TNSubscriptionConfig.currentOfferingIdentifier.")
             return
         }
 
