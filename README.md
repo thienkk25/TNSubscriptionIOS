@@ -35,6 +35,15 @@ These apps have paying subscribers and run the RevenueCat engine. `TNSubscriptio
 Each engine is a separate library product that links exactly one billing SDK — or none.
 (Mỗi engine là một library product riêng, chỉ link đúng một SDK thanh toán — hoặc không SDK nào.)
 
+> **Seeing both RevenueCat and Adapty under Package Dependencies is expected.** SwiftPM downloads
+> every dependency a package declares, whichever product you pick — but only the SDK behind your
+> chosen engine is built and linked into your app. The others are source checkouts only and add
+> nothing to your binary.
+> (**Thấy cả RevenueCat lẫn Adapty trong Package Dependencies là bình thường.** SwiftPM tải mọi
+> dependency mà package khai báo, bất kể bạn chọn product nào — nhưng chỉ SDK của engine bạn chọn
+> mới được build và link vào app. Các SDK còn lại chỉ là source được tải về, không thêm gì vào
+> binary.)
+
 **The configuration is shared, not copied.** `TNSubscriptionConfig`, `TNEntitlement`, `TNOffering`,
 `TNLogLevel`, `DefaultPaywallConfig` and `TNConsumableProduct` are a single type each, re-exported by
 every engine, and every engine names its entry point `TNSubscription` too. So this setup is the
