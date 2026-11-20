@@ -94,11 +94,14 @@ final class TNEngineContractTests: XCTestCase {
             entitlementId: "Premium",
             showRedeemCodeButton: true,
             showSavingsBadge: false,
-            showPricePerMonth: false
+            showPricePerMonth: false,
+            closeButtonTint: .white
         )
         let coins = TNConsumableProduct(id: "com.app.100coins", reward: 100, currency: "coins")
 
         XCTAssertFalse(paywall.showSavingsBadge)
+        XCTAssertEqual(paywall.closeButtonTint, .white)
+        XCTAssertNil(DefaultPaywallConfig().closeButtonTint, "By default the Close button is left to the system.")
         XCTAssertEqual(coins.reward, 100)
 
         // Compiled, never run: proves the README's presentation call exists on this engine with

@@ -119,6 +119,21 @@ public struct DefaultPaywallConfig {
     /// (Giao diện sáng/tối ưu tiên. `nil` sẽ theo hệ thống.)
     public var preferredColorScheme: ColorScheme?
 
+    /// Text colour of the toolbar's Close button. `nil` (the default) leaves it to the system,
+    /// which on iOS 26 renders it inside the standard Liquid Glass capsule.
+    /// (Màu chữ của nút Close trên toolbar. `nil` (mặc định) để hệ thống tự quyết, và trên iOS 26
+    /// nút được vẽ trong viên nang Liquid Glass chuẩn.)
+    ///
+    /// It is separate from `accentColor` on purpose: `accentColor` also drives the purchase button,
+    /// the selected plan, the badges and the prices, so tinting Close through it forced the same
+    /// colour onto a system control. Before this field existed, Close always used `accentColor` —
+    /// pass your accent colour here to keep that look.
+    /// (Cố ý tách khỏi `accentColor`: `accentColor` còn điều khiển nút mua, gói đang chọn, các badge
+    /// và giá tiền, nên tô nút Close bằng nó đã ép cùng một màu lên một control của hệ thống. Trước khi
+    /// có trường này, nút Close luôn dùng `accentColor` — truyền màu accent của bạn vào đây nếu muốn
+    /// giữ giao diện cũ.)
+    public var closeButtonTint: Color?
+
     // MARK: - Init
 
     public init(
@@ -147,7 +162,8 @@ public struct DefaultPaywallConfig {
             colors: [Color(red: 0.83, green: 0.69, blue: 0.22), Color(red: 0.64, green: 0.49, blue: 0.23)],
             startPoint: .topLeading, endPoint: .bottomTrailing
         ),
-        preferredColorScheme: ColorScheme? = .dark
+        preferredColorScheme: ColorScheme? = .dark,
+        closeButtonTint: Color? = nil
     ) {
         self.appName = appName
         self.features = features
@@ -168,5 +184,6 @@ public struct DefaultPaywallConfig {
         self.cardLightColor = cardLightColor
         self.premiumGradient = premiumGradient
         self.preferredColorScheme = preferredColorScheme
+        self.closeButtonTint = closeButtonTint
     }
 }

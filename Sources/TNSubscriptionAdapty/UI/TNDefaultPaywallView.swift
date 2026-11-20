@@ -112,8 +112,7 @@ public struct TNDefaultPaywallView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button(NSLocalizedString("Close", comment: "")) { dismiss() }
-                        .foregroundStyle(config.accentColor)
+                    closeButton
                 }
             }
             .toolbarBackground(config.backgroundColor, for: .navigationBar)
@@ -185,6 +184,20 @@ public struct TNDefaultPaywallView: View {
     private func selectDefaultPackageIfNeeded() {
         guard selectedPackage == nil, !displayedPackages.isEmpty else { return }
         selectedPackage = displayedPackages.first { manager.isRecommended($0) } ?? displayedPackages.first
+    }
+
+    /// The toolbar's Close button. Tinted only when `closeButtonTint` is set, so by default it is
+    /// the plain system control (the standard Liquid Glass capsule on iOS 26).
+    /// (Nút Close trên toolbar. Chỉ tô màu khi có `closeButtonTint`, nên mặc định nó là control
+    /// chuẩn của hệ thống — viên nang Liquid Glass trên iOS 26.)
+    @ViewBuilder
+    private var closeButton: some View {
+        let button = Button(NSLocalizedString("Close", comment: "")) { dismiss() }
+        if let tint = config.closeButtonTint {
+            button.foregroundStyle(tint)
+        } else {
+            button
+        }
     }
 
     // MARK: - Header

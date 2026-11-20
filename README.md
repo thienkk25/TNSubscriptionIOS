@@ -1478,12 +1478,14 @@ All properties have sensible defaults. Only customize what you need. (Tất cả
 |---|---|---|---|
 | `appName` | `String` | `"Premium"` | App name in header (Tên app ở header) |
 | `features` | `[Feature]` | 3 defaults | Premium features list (Danh sách tính năng premium) |
-| `offeringIdentifier` | `String?` | `nil` | Specific RevenueCat Offering ID (ID Offering cụ thể) |
+| `offeringIdentifier` | `String?` | `nil` | Offering to show — RevenueCat offering ID, Adapty placement ID, or Core `TNOffering` ID. `nil` uses `currentOfferingIdentifier` (Offering cần hiển thị — offering ID của RevenueCat, placement ID của Adapty, hoặc ID `TNOffering` của Core. `nil` dùng `currentOfferingIdentifier`) |
 | `entitlementId` | `String?` | `nil` | Specific target Entitlement ID (ID Entitlement mục tiêu) |
 | `showRedeemCodeButton` | `Bool` | `true` | Show "Redeem Code" button in footer (Hiện nút nhập mã ưu đãi ở cuối paywall) |
+| `showSavingsBadge` | `Bool` | `true` | "SAVE X%" badge on plans cheaper per month than the most expensive one (Nhãn "SAVE X%" trên gói rẻ hơn tính theo tháng) |
+| `showPricePerMonth` | `Bool` | `true` | Per-month price under non-monthly plans (Giá quy đổi theo tháng dưới các gói không phải gói tháng) |
 | `privacyURL` | `URL?` | `nil` | Privacy Policy link (Link chính sách bảo mật) |
 | `termsURL` | `URL?` | `nil` | Terms of Use link (Link điều khoản sử dụng) |
-| `accentColor` | `Color` | `.cyan` | Primary accent color (Màu accent chính) |
+| `accentColor` | `Color` | `.cyan` | Purchase button, selected plan, badges, prices — not the Close button (Nút mua, gói đang chọn, badge, giá — không áp dụng cho nút Close) |
 | `secondaryColor` | `Color` | `.purple` | Secondary accent color (Màu accent phụ) |
 | `backgroundColor` | `Color` | `.black` | Screen background (Màu nền) |
 | `textPrimaryColor` | `Color` | `.white` | Primary text color (Màu text chính) |
@@ -1493,6 +1495,7 @@ All properties have sensible defaults. Only customize what you need. (Tất cả
 | `cardLightColor` | `Color` | lighter gray | Selected card background (Màu card khi chọn) |
 | `premiumGradient` | `LinearGradient` | gold | CTA button gradient (Gradient nút CTA) |
 | `preferredColorScheme` | `ColorScheme?` | `.dark` | Color scheme (Chế độ màu) |
+| `closeButtonTint` | `Color?` | `nil` | Text colour of the toolbar Close button. `nil` leaves it to the system (the Liquid Glass capsule on iOS 26). Before this field, Close used `accentColor`; pass your accent colour to keep that look (Màu chữ nút Close trên toolbar. `nil` để hệ thống tự quyết — viên nang Liquid Glass trên iOS 26. Trước khi có field này, nút Close dùng `accentColor`; truyền màu accent nếu muốn giữ giao diện cũ) |
 
 ---
 
