@@ -95,13 +95,23 @@ final class TNEngineContractTests: XCTestCase {
             showRedeemCodeButton: true,
             showSavingsBadge: false,
             showPricePerMonth: false,
-            closeButtonTint: .white
+            closeButtonTint: .white,
+            headerTitle: "Go Pro",
+            headerSubtitle: "Deeper match analysis, no ads.",
+            unlockedHeaderTitle: "You're Pro",
+            unlockedHeaderSubtitle: "Thanks for your support."
         )
         let coins = TNConsumableProduct(id: "com.app.100coins", reward: 100, currency: "coins")
 
         XCTAssertFalse(paywall.showSavingsBadge)
         XCTAssertEqual(paywall.closeButtonTint, .white)
         XCTAssertNil(DefaultPaywallConfig().closeButtonTint, "By default the Close button is left to the system.")
+        XCTAssertEqual(paywall.headerSubtitle, "Deeper match analysis, no ads.")
+        let defaults = DefaultPaywallConfig()
+        XCTAssertNil(defaults.headerTitle, "nil keeps the built-in copy, so apps that set nothing see no change.")
+        XCTAssertNil(defaults.headerSubtitle)
+        XCTAssertNil(defaults.unlockedHeaderTitle)
+        XCTAssertNil(defaults.unlockedHeaderSubtitle)
         XCTAssertEqual(coins.reward, 100)
 
         // Compiled, never run: proves the README's presentation call exists on this engine with

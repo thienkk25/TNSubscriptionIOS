@@ -227,18 +227,18 @@ public struct TNDefaultPaywallView: View {
         }
     }
     
+    /// The app's own copy from `DefaultPaywallConfig` when set, otherwise the generic default.
+    /// (Câu của chính app trong `DefaultPaywallConfig` nếu có, nếu không thì dùng câu mặc định.)
     private var headerTitle: String {
-        if isTargetUnlocked {
-            return NSLocalizedString("You're Premium", comment: "")
-        }
-        return NSLocalizedString("Upgrade to Premium", comment: "")
+        isTargetUnlocked
+            ? (config.unlockedHeaderTitle ?? NSLocalizedString("You're Premium", comment: ""))
+            : (config.headerTitle ?? NSLocalizedString("Upgrade to Premium", comment: ""))
     }
-    
+
     private var headerSubtitle: String {
-        if isTargetUnlocked {
-            return NSLocalizedString("Thank you for supporting the app. Manage or change your plan below.", comment: "")
-        }
-        return NSLocalizedString("Unlock all premium features, custom designs, and settings.", comment: "")
+        isTargetUnlocked
+            ? (config.unlockedHeaderSubtitle ?? NSLocalizedString("Thank you for supporting the app. Manage or change your plan below.", comment: ""))
+            : (config.headerSubtitle ?? NSLocalizedString("Unlock all premium features, custom designs, and settings.", comment: ""))
     }
     
     private var verifyingSection: some View {

@@ -134,6 +134,29 @@ public struct DefaultPaywallConfig {
     /// giữ giao diện cũ.)
     public var closeButtonTint: Color?
 
+    // MARK: - Header Copy
+
+    /// Headline shown while the target entitlement is **not** active. `nil` keeps the default,
+    /// "Upgrade to Premium".
+    /// (Tiêu đề khi quyền lợi mục tiêu **chưa** hoạt động. `nil` giữ câu mặc định "Upgrade to Premium".)
+    public var headerTitle: String?
+
+    /// The line under the headline while the entitlement is **not** active — your app's pitch.
+    /// `nil` keeps the generic default, "Unlock all premium features, custom designs, and settings."
+    /// (Dòng dưới tiêu đề khi quyền lợi **chưa** hoạt động — câu giới thiệu của app bạn. `nil` giữ câu
+    /// mặc định chung chung "Unlock all premium features, custom designs, and settings.")
+    public var headerSubtitle: String?
+
+    /// Headline shown once the entitlement is active. `nil` keeps "You're Premium".
+    /// (Tiêu đề khi quyền lợi đã hoạt động. `nil` giữ câu "You're Premium".)
+    public var unlockedHeaderTitle: String?
+
+    /// The line under the headline once the entitlement is active. `nil` keeps "Thank you for
+    /// supporting the app. Manage or change your plan below."
+    /// (Dòng dưới tiêu đề khi quyền lợi đã hoạt động. `nil` giữ câu "Thank you for supporting the
+    /// app. Manage or change your plan below.")
+    public var unlockedHeaderSubtitle: String?
+
     // MARK: - Init
 
     public init(
@@ -163,7 +186,11 @@ public struct DefaultPaywallConfig {
             startPoint: .topLeading, endPoint: .bottomTrailing
         ),
         preferredColorScheme: ColorScheme? = .dark,
-        closeButtonTint: Color? = nil
+        closeButtonTint: Color? = nil,
+        headerTitle: String? = nil,
+        headerSubtitle: String? = nil,
+        unlockedHeaderTitle: String? = nil,
+        unlockedHeaderSubtitle: String? = nil
     ) {
         self.appName = appName
         self.features = features
@@ -185,5 +212,9 @@ public struct DefaultPaywallConfig {
         self.premiumGradient = premiumGradient
         self.preferredColorScheme = preferredColorScheme
         self.closeButtonTint = closeButtonTint
+        self.headerTitle = headerTitle
+        self.headerSubtitle = headerSubtitle
+        self.unlockedHeaderTitle = unlockedHeaderTitle
+        self.unlockedHeaderSubtitle = unlockedHeaderSubtitle
     }
 }

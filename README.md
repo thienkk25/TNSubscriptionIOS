@@ -1505,6 +1505,22 @@ All properties have sensible defaults. Only customize what you need. (Tất cả
 | `premiumGradient` | `LinearGradient` | gold | CTA button gradient (Gradient nút CTA) |
 | `preferredColorScheme` | `ColorScheme?` | `.dark` | Color scheme (Chế độ màu) |
 | `closeButtonTint` | `Color?` | `nil` | Text colour of the toolbar Close button. `nil` leaves it to the system (the Liquid Glass capsule on iOS 26). Before this field, Close used `accentColor`; pass your accent colour to keep that look (Màu chữ nút Close trên toolbar. `nil` để hệ thống tự quyết — viên nang Liquid Glass trên iOS 26. Trước khi có field này, nút Close dùng `accentColor`; truyền màu accent nếu muốn giữ giao diện cũ) |
+| `headerTitle` | `String?` | `nil` | Headline before purchase. `nil` = "Upgrade to Premium" (Tiêu đề trước khi mua. `nil` = "Upgrade to Premium") |
+| `headerSubtitle` | `String?` | `nil` | Your app's pitch under the headline. `nil` = "Unlock all premium features, custom designs, and settings." (Câu giới thiệu của app dưới tiêu đề. `nil` = câu mặc định chung chung) |
+| `unlockedHeaderTitle` | `String?` | `nil` | Headline once premium. `nil` = "You're Premium" (Tiêu đề khi đã là premium. `nil` = "You're Premium") |
+| `unlockedHeaderSubtitle` | `String?` | `nil` | Line under it once premium. `nil` = "Thank you for supporting the app. Manage or change your plan below." (Dòng bên dưới khi đã là premium. `nil` = câu cảm ơn mặc định) |
+
+
+The default header copy is generic and fits no app in particular — set your own:
+(Câu tiêu đề mặc định rất chung chung, không hợp riêng app nào — hãy đặt câu của riêng bạn:)
+
+```swift
+DefaultPaywallConfig(
+    appName: "PitchLab Soccer",
+    headerTitle: "Go Pro",
+    headerSubtitle: "Deeper match analysis, unlimited drills, no ads."
+)
+```
 
 ---
 
