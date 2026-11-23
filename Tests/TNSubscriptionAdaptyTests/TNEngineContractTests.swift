@@ -99,7 +99,8 @@ final class TNEngineContractTests: XCTestCase {
             headerTitle: "Go Pro",
             headerSubtitle: "Deeper match analysis, no ads.",
             unlockedHeaderTitle: "You're Pro",
-            unlockedHeaderSubtitle: "Thanks for your support."
+            unlockedHeaderSubtitle: "Thanks for your support.",
+            texts: [.redeemCode: "Nhập mã ưu đãi"]
         )
         let coins = TNConsumableProduct(id: "com.app.100coins", reward: 100, currency: "coins")
 
@@ -112,6 +113,14 @@ final class TNEngineContractTests: XCTestCase {
         XCTAssertNil(defaults.headerSubtitle)
         XCTAssertNil(defaults.unlockedHeaderTitle)
         XCTAssertNil(defaults.unlockedHeaderSubtitle)
+
+        // texts: an override wins, everything else keeps its built-in text.
+        XCTAssertEqual(paywall.text(.redeemCode), "Nhập mã ưu đãi")
+        XCTAssertEqual(paywall.text(.restorePurchases), "Restore Purchases")
+        XCTAssertEqual(defaults.text(.redeemCode), "Redeem Code")
+        for key in TNPaywallText.allCases {
+            XCTAssertFalse(key.defaultValue.isEmpty, "\(key) has no built-in text, so the paywall would show a blank.")
+        }
         XCTAssertEqual(coins.reward, 100)
 
         // Compiled, never run: proves the README's presentation call exists on this engine with

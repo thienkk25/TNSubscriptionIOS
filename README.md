@@ -114,7 +114,7 @@ dùng những gì trong bảng này thì đổi engine chỉ cần đổi `impor
 | Entry point (Điểm vào) | `TNSubscription.configure(config:)`, `TNSubscription.shared` |
 | Status (Trạng thái) | `isPremium`, `activeEntitlements`, `entitlementState`, `hasEntitlement(_:)`, `productIDs(for:)`, `currentPlanProductID`, `currentPlanDisplayName`, `currentProductID(for:)`, `entitlementError` |
 | Loading & actions (Tải & thao tác) | `checkSubscriptionStatus()`, `resolveEntitlement()`, `fetchOfferings(offeringIdentifier:)`, `loadOfferings(offeringIdentifier:)`, `isLoadingOfferings`, `offeringsError`, `isPurchasing`, `restorePurchases(completion:)`, `restorePurchasesAsync()`, `presentOfferCodeRedemption()` |
-| Paywall | `DefaultPaywallConfig`, `TNDefaultPaywallView`, `TNSubscription.presentDefaultPaywall(from:config:)`, `TNSubscription.presentPaywall(from:content:)` |
+| Paywall | `DefaultPaywallConfig`, `TNPaywallText`, `TNDefaultPaywallView`, `TNSubscription.presentDefaultPaywall(from:config:)`, `TNSubscription.presentPaywall(from:content:)` |
 | Consumables | `TNConsumableProduct`, `TNConsumableManager.configure(products:)`, `loadProducts()`, `purchaseAsync(productId:)`, `balance(for:)`, `canAfford(_:currency:)`, `addBalance(_:for:)`, `deductBalance(_:for:)`, `setBalance(_:for:)` |
 | Identity & logs (Danh tính & log) | `TNSubscription.clientId`, `deviceId`, `identityHeaders(userId:)`, `displayName(forProductID:)`, `logLevel`, `logHandler` |
 
@@ -1509,6 +1509,7 @@ All properties have sensible defaults. Only customize what you need. (Tất cả
 | `headerSubtitle` | `String?` | `nil` | Your app's pitch under the headline. `nil` = "Unlock all premium features, custom designs, and settings." (Câu giới thiệu của app dưới tiêu đề. `nil` = câu mặc định chung chung) |
 | `unlockedHeaderTitle` | `String?` | `nil` | Headline once premium. `nil` = "You're Premium" (Tiêu đề khi đã là premium. `nil` = "You're Premium") |
 | `unlockedHeaderSubtitle` | `String?` | `nil` | Line under it once premium. `nil` = "Thank you for supporting the app. Manage or change your plan below." (Dòng bên dưới khi đã là premium. `nil` = câu cảm ơn mặc định) |
+| `texts` | `[TNPaywallText: String]` | `[:]` | Replacements for any other text — buttons, badges, plan names, alerts. Missing keys keep the built-in text (Chữ thay thế cho mọi chữ khác — nút, badge, tên gói, alert. Key nào không có thì giữ chữ có sẵn) |
 
 
 The default header copy is generic and fits no app in particular — set your own:
@@ -1521,6 +1522,48 @@ DefaultPaywallConfig(
     headerSubtitle: "Deeper match analysis, unlimited drills, no ads."
 )
 ```
+
+
+### Replacing any text on the paywall (Thay bất kỳ chữ nào trên paywall)
+
+Every label, button, badge, plan name and alert on the built-in paywall can be replaced through
+`texts`. Anything you leave out keeps its built-in English text — which is still looked up in your
+app's `Localizable` file first, so existing translations keep working.
+(Mọi nhãn, nút, badge, tên gói và alert trên paywall có sẵn đều thay được qua `texts`. Chữ nào bạn
+không đặt thì giữ chữ tiếng Anh có sẵn — vẫn được tra trong file `Localizable` của app trước, nên bản
+dịch đang có vẫn hoạt động.)
+
+```swift
+DefaultPaywallConfig(
+    headerSubtitle: "Phân tích trận đấu chuyên sâu, không quảng cáo.",
+    texts: [
+        .redeemCode: "Nhập mã ưu đãi",
+        .restorePurchases: "Khôi phục giao dịch",
+        .continueButton: "Tiếp tục",
+        .yearly: "Gói năm",
+    ]
+)
+```
+
+| Group (Nhóm) | Keys |
+|---|---|
+| Screen (Màn hình) | `.navigationTitle`, `.close`, `.verifying`, `.whatsIncluded`, `.choosePlan`, `.plansUnavailable`, `.retry` |
+| Active plan (Gói đang dùng) | `.premiumActive`, `.switchPlanHint`, `.manageSubscription`, `.gracePeriodNotice`, `.billingRetryNotice` |
+| Plan names (Tên gói) | `.weekly`, `.monthly`, `.twoMonths`, `.threeMonths`, `.sixMonths`, `.yearly`, `.lifetime` |
+| Plan cards (Thẻ gói) | `.lifetimeSubtitle`, `.autoRenewSubtitle`, `.bestValue`, `.current`, `.freeTrial`, `.introOffer`, `.specialOffer`, `.welcomeBack` |
+| Buttons (Nút) | `.continueButton`, `.switchPlan`, `.startFreeTrial`, `.claimIntroOffer`, `.claimOffer`, `.restorePurchases`, `.redeemCode` |
+| Footer (Chân trang) | `.privacyPolicy`, `.termsOfUse`, `.legalDisclaimer` |
+| Alerts (Alert) | `.ok`, `.purchaseSuccessTitle`, `.purchaseSuccessMessage`, `.purchaseFailedTitle`, `.purchasePendingTitle`, `.purchasePendingMessage`, `.restoreSuccessTitle`, `.restoreSuccessMessage`, `.restoreFailedTitle`, `.restoreFailedMessage`, `.noSubscriptionTitle`, `.noSubscriptionMessage` |
+
+Two kinds of text are not keys (Hai loại chữ không có trong danh sách key):
+
+- **The headline and the line under it** — use `headerTitle`, `headerSubtitle`, `unlockedHeaderTitle`
+  and `unlockedHeaderSubtitle`. (**Tiêu đề và dòng bên dưới** — dùng bốn field riêng.)
+- **Text with placeholders** — `"SAVE %d%%"`, `"%@ / mo"`, `"%@ · Then %@"`, `"Current plan: %@"`,
+  `"Auto-renew is off. Your access ends on %@."`. A placeholder typed wrong crashes at runtime, so
+  these are replaced only through your `Localizable` file, keyed by the English text.
+  (**Chữ có placeholder** — gõ sai placeholder sẽ crash lúc chạy, nên các chuỗi này chỉ thay được qua
+  file `Localizable` của app, với key là chữ tiếng Anh.)
 
 ---
 

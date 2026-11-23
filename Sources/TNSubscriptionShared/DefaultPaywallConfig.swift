@@ -157,6 +157,20 @@ public struct DefaultPaywallConfig {
     /// app. Manage or change your plan below.")
     public var unlockedHeaderSubtitle: String?
 
+    // MARK: - Texts
+
+    /// Replacements for any other text on the paywall — buttons, badges, plan names, alerts.
+    /// Anything not in the dictionary keeps its built-in text. See `TNPaywallText` for every key.
+    /// (Chữ thay thế cho mọi chữ khác trên paywall — nút, badge, tên gói, alert. Chữ nào không có
+    /// trong dictionary thì giữ nguyên chữ có sẵn. Xem `TNPaywallText` để biết mọi key.)
+    public var texts: [TNPaywallText: String]
+
+    /// The text to show for `key`: your replacement if set, otherwise the built-in text.
+    /// (Chữ hiển thị cho `key`: chữ thay thế của bạn nếu có, nếu không thì chữ có sẵn.)
+    public func text(_ key: TNPaywallText) -> String {
+        texts[key] ?? key.defaultValue
+    }
+
     // MARK: - Init
 
     public init(
@@ -190,7 +204,8 @@ public struct DefaultPaywallConfig {
         headerTitle: String? = nil,
         headerSubtitle: String? = nil,
         unlockedHeaderTitle: String? = nil,
-        unlockedHeaderSubtitle: String? = nil
+        unlockedHeaderSubtitle: String? = nil,
+        texts: [TNPaywallText: String] = [:]
     ) {
         self.appName = appName
         self.features = features
@@ -216,5 +231,6 @@ public struct DefaultPaywallConfig {
         self.headerSubtitle = headerSubtitle
         self.unlockedHeaderTitle = unlockedHeaderTitle
         self.unlockedHeaderSubtitle = unlockedHeaderSubtitle
+        self.texts = texts
     }
 }

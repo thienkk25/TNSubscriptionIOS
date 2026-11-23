@@ -108,7 +108,7 @@ public struct TNDefaultPaywallView: View {
                     .padding(.bottom, 32)
                 }
             }
-            .navigationTitle(NSLocalizedString("Premium", comment: ""))
+            .navigationTitle(config.text(.navigationTitle))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -140,39 +140,39 @@ public struct TNDefaultPaywallView: View {
             switch alert {
             case .purchaseSuccess:
                 return Alert(
-                    title: Text(NSLocalizedString("Welcome to Premium!", comment: "")),
-                    message: Text(NSLocalizedString("You now have full access to all premium features.", comment: "")),
-                    dismissButton: .default(Text(NSLocalizedString("OK", comment: ""))) { dismiss() }
+                    title: Text(config.text(.purchaseSuccessTitle)),
+                    message: Text(config.text(.purchaseSuccessMessage)),
+                    dismissButton: .default(Text(config.text(.ok))) { dismiss() }
                 )
             case .purchaseFailed(let message):
                 return Alert(
-                    title: Text(NSLocalizedString("Purchase Failed", comment: "")),
+                    title: Text(config.text(.purchaseFailedTitle)),
                     message: Text(message),
-                    dismissButton: .default(Text(NSLocalizedString("OK", comment: "")))
+                    dismissButton: .default(Text(config.text(.ok)))
                 )
             case .purchasePending:
                 return Alert(
-                    title: Text(NSLocalizedString("Waiting for Approval", comment: "")),
-                    message: Text(NSLocalizedString("Your purchase needs to be approved before it can complete. You'll get access automatically once it is.", comment: "")),
-                    dismissButton: .default(Text(NSLocalizedString("OK", comment: "")))
+                    title: Text(config.text(.purchasePendingTitle)),
+                    message: Text(config.text(.purchasePendingMessage)),
+                    dismissButton: .default(Text(config.text(.ok)))
                 )
             case .restoreSuccess:
                 return Alert(
-                    title: Text(NSLocalizedString("Purchase Restored", comment: "")),
-                    message: Text(NSLocalizedString("Your Premium subscription has been restored successfully!", comment: "")),
-                    dismissButton: .default(Text(NSLocalizedString("OK", comment: "")))
+                    title: Text(config.text(.restoreSuccessTitle)),
+                    message: Text(config.text(.restoreSuccessMessage)),
+                    dismissButton: .default(Text(config.text(.ok)))
                 )
             case .restoreFailed:
                 return Alert(
-                    title: Text(NSLocalizedString("Network Error", comment: "")),
-                    message: Text(NSLocalizedString("Please check your internet connection and try again.", comment: "")),
-                    dismissButton: .default(Text(NSLocalizedString("OK", comment: "")))
+                    title: Text(config.text(.restoreFailedTitle)),
+                    message: Text(config.text(.restoreFailedMessage)),
+                    dismissButton: .default(Text(config.text(.ok)))
                 )
             case .noSubscription:
                 return Alert(
-                    title: Text(NSLocalizedString("No Active Subscription", comment: "")),
-                    message: Text(NSLocalizedString("We couldn't find an active Premium subscription to restore.", comment: "")),
-                    dismissButton: .default(Text(NSLocalizedString("OK", comment: "")))
+                    title: Text(config.text(.noSubscriptionTitle)),
+                    message: Text(config.text(.noSubscriptionMessage)),
+                    dismissButton: .default(Text(config.text(.ok)))
                 )
             }
         }
@@ -189,7 +189,7 @@ public struct TNDefaultPaywallView: View {
     /// chuẩn của hệ thống — viên nang Liquid Glass trên iOS 26.)
     @ViewBuilder
     private var closeButton: some View {
-        let button = Button(NSLocalizedString("Close", comment: "")) { dismiss() }
+        let button = Button(config.text(.close)) { dismiss() }
         if let tint = config.closeButtonTint {
             button.foregroundStyle(tint)
         } else {
@@ -251,7 +251,7 @@ public struct TNDefaultPaywallView: View {
             ProgressView()
                 .tint(config.accentColor)
                 .scaleEffect(1.3)
-            Text(NSLocalizedString("Verifying your subscription...", comment: ""))
+            Text(config.text(.verifying))
                 .foregroundStyle(config.textSecondaryColor)
         }
         .frame(maxWidth: .infinity)
@@ -265,7 +265,7 @@ public struct TNDefaultPaywallView: View {
             HStack {
                 Image(systemName: "checkmark.seal.fill")
                     .foregroundStyle(config.secondaryColor)
-                Text(NSLocalizedString("Premium Active", comment: ""))
+                Text(config.text(.premiumActive))
                     .font(.headline)
                     .foregroundStyle(config.textPrimaryColor)
                 Spacer()
@@ -289,7 +289,7 @@ public struct TNDefaultPaywallView: View {
 
             featuresSection
 
-            Text(NSLocalizedString("Want a different plan? Choose one below to switch. Apple will prorate your subscription when applicable.", comment: ""))
+            Text(config.text(.switchPlanHint))
                 .font(.caption)
                 .foregroundStyle(config.textMutedColor)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -300,7 +300,7 @@ public struct TNDefaultPaywallView: View {
             Button {
                 manager.showManageSubscriptions()
             } label: {
-                Text(NSLocalizedString("Manage Subscription in App Store", comment: ""))
+                Text(config.text(.manageSubscription))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(config.accentColor)
                     .frame(maxWidth: .infinity)
@@ -322,13 +322,13 @@ public struct TNDefaultPaywallView: View {
             if info.isInGracePeriod {
                 noticeRow(
                     icon: "exclamationmark.triangle.fill",
-                    text: NSLocalizedString("There's a problem with your payment method. Please update it to keep your subscription.", comment: ""),
+                    text: config.text(.gracePeriodNotice),
                     tint: .orange
                 )
             } else if info.hasBillingIssue {
                 noticeRow(
                     icon: "creditcard.trianglebadge.exclamationmark",
-                    text: NSLocalizedString("Your last payment failed. Update your payment method in the App Store to restore access.", comment: ""),
+                    text: config.text(.billingRetryNotice),
                     tint: .red
                 )
             } else if !info.willRenew, let expiry = info.expirationDate {
@@ -367,7 +367,7 @@ public struct TNDefaultPaywallView: View {
 
     private var featuresSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("What's included", comment: ""))
+            Text(config.text(.whatsIncluded))
                 .font(.headline)
                 .foregroundStyle(config.textPrimaryColor)
 
@@ -401,7 +401,7 @@ public struct TNDefaultPaywallView: View {
     @ViewBuilder
     private var plansSection: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text(NSLocalizedString("Choose your plan", comment: ""))
+            Text(config.text(.choosePlan))
                 .font(.headline)
                 .foregroundStyle(config.textPrimaryColor)
 
@@ -414,11 +414,11 @@ public struct TNDefaultPaywallView: View {
                 .padding(.vertical, 24)
             } else if displayedPackages.isEmpty {
                 VStack(spacing: 12) {
-                    Text(manager.offeringsError ?? NSLocalizedString("Plans could not be loaded.", comment: ""))
+                    Text(manager.offeringsError ?? config.text(.plansUnavailable))
                         .font(.caption)
                         .foregroundStyle(config.textSecondaryColor)
                         .multilineTextAlignment(.center)
-                    Button(NSLocalizedString("Retry", comment: "")) {
+                    Button(config.text(.retry)) {
                         manager.fetchOfferings(offeringIdentifier: config.offeringIdentifier)
                     }
                     .font(.subheadline.weight(.semibold))
@@ -456,7 +456,7 @@ public struct TNDefaultPaywallView: View {
                             .foregroundStyle(config.textPrimaryColor)
 
                         if isRecommended {
-                            badge(NSLocalizedString("BEST VALUE", comment: ""), fg: .black, bg: config.accentColor)
+                            badge(config.text(.bestValue), fg: .black, bg: config.accentColor)
                         }
                         if let savings, savings > 0 {
                             badge(
@@ -468,15 +468,15 @@ public struct TNDefaultPaywallView: View {
                         if let intro {
                             badge(
                                 intro.paymentMode == .freeTrial
-                                    ? NSLocalizedString("FREE TRIAL", comment: "")
-                                    : NSLocalizedString("INTRO OFFER", comment: ""),
+                                    ? config.text(.freeTrial)
+                                    : config.text(.introOffer),
                                 fg: config.accentColor,
                                 bg: config.accentColor.opacity(0.18)
                             )
                         }
                         if isCurrent {
                             badge(
-                                NSLocalizedString("CURRENT", comment: ""),
+                                config.text(.current),
                                 fg: config.secondaryColor,
                                 bg: config.secondaryColor.opacity(0.15)
                             )
@@ -531,13 +531,26 @@ public struct TNDefaultPaywallView: View {
             .clipShape(Capsule())
     }
 
+    /// The plan's name: your replacement from `texts` if set, otherwise the built-in name. A plan with
+    /// a non-standard period uses the store's own product name.
+    /// (Tên gói: chữ thay thế trong `texts` nếu có, nếu không thì tên có sẵn. Gói có kỳ hạn không chuẩn
+    /// thì dùng tên sản phẩm của store.)
     private func planTitle(for package: TNPackage) -> String {
-        package.packageType.localizedName ?? package.localizedTitle
+        switch package.packageType {
+        case .weekly: return config.text(.weekly)
+        case .monthly: return config.text(.monthly)
+        case .twoMonth: return config.text(.twoMonths)
+        case .threeMonth: return config.text(.threeMonths)
+        case .sixMonth: return config.text(.sixMonths)
+        case .annual: return config.text(.yearly)
+        case .lifetime: return config.text(.lifetime)
+        case .custom, .unknown: return package.localizedTitle
+        }
     }
 
     private func planSubtitle(for package: TNPackage) -> String {
         if package.packageType == .lifetime {
-            return NSLocalizedString("One-time purchase · Forever access", comment: "")
+            return config.text(.lifetimeSubtitle)
         }
         if let summary = manager.introOfferSummary(for: package) {
             return String(
@@ -546,7 +559,7 @@ public struct TNDefaultPaywallView: View {
                 package.localizedPriceString
             )
         }
-        return NSLocalizedString("Auto-renewable subscription", comment: "")
+        return config.text(.autoRenewSubtitle)
     }
 
     // MARK: - Purchase Button
@@ -577,14 +590,14 @@ public struct TNDefaultPaywallView: View {
 
     private var purchaseButtonTitle: String {
         if isTargetUnlocked {
-            return NSLocalizedString("Switch Plan", comment: "")
+            return config.text(.switchPlan)
         }
         if let selected = selectedPackage, let intro = manager.introOffer(for: selected) {
             return intro.paymentMode == .freeTrial
-                ? NSLocalizedString("Start Free Trial", comment: "")
-                : NSLocalizedString("Claim Intro Offer", comment: "")
+                ? config.text(.startFreeTrial)
+                : config.text(.claimIntroOffer)
         }
-        return NSLocalizedString("Continue", comment: "")
+        return config.text(.continueButton)
     }
 
     // MARK: - Footer
@@ -593,10 +606,10 @@ public struct TNDefaultPaywallView: View {
     private var legalLinksRow: some View {
         HStack(spacing: 20) {
             if let privacyURL = config.privacyURL {
-                Link(NSLocalizedString("Privacy Policy", comment: ""), destination: privacyURL)
+                Link(config.text(.privacyPolicy), destination: privacyURL)
             }
             if let termsURL = config.termsURL {
-                Link(NSLocalizedString("Terms of Use", comment: ""), destination: termsURL)
+                Link(config.text(.termsOfUse), destination: termsURL)
             }
         }
         .font(.caption2)
@@ -610,7 +623,7 @@ public struct TNDefaultPaywallView: View {
                     if isRestoring {
                         ProgressView().tint(config.accentColor)
                     } else {
-                        Text(NSLocalizedString("Restore Purchases", comment: ""))
+                        Text(config.text(.restorePurchases))
                             .font(.subheadline)
                             .foregroundStyle(config.accentColor)
                     }
@@ -625,7 +638,7 @@ public struct TNDefaultPaywallView: View {
                     Button {
                         isRedeemingOfferCode = true
                     } label: {
-                        Text(NSLocalizedString("Redeem Code", comment: ""))
+                        Text(config.text(.redeemCode))
                             .font(.subheadline)
                             .foregroundStyle(config.accentColor)
                     }
@@ -634,7 +647,7 @@ public struct TNDefaultPaywallView: View {
 
             legalLinksRow
 
-            Text(NSLocalizedString("Payment will be charged to your Apple ID. Subscriptions renew automatically unless cancelled at least 24 hours before the end of the current period.", comment: ""))
+            Text(config.text(.legalDisclaimer))
                 .font(.caption2)
                 .foregroundStyle(config.textMutedColor.opacity(0.8))
                 .multilineTextAlignment(.center)
