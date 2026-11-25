@@ -16,6 +16,7 @@ import Foundation
 /// |---|---|---|
 /// | `TNSubscriptionIOS` | RevenueCat entitlement ID | StoreKit-first unlock, offline |
 /// | `TNSubscriptionAdapty` | Adapty access level ID | offline fallback |
+/// | `TNSubscriptionQonversion` | Qonversion entitlement ID | offline fallback, default offering |
 /// | `TNSubscriptionCore` | your own name | everything — they are the only mapping |
 public struct TNEntitlement: Hashable, Sendable {
     /// The entitlement ID. (ID của quyền lợi.)
@@ -36,10 +37,11 @@ public struct TNEntitlement: Hashable, Sendable {
 /// An ordered group of products for a paywall, declared in code.
 /// (Một nhóm sản phẩm có thứ tự cho paywall, khai báo trong code.)
 ///
-/// Only `TNSubscriptionCore` reads these: RevenueCat and Adapty serve offerings from their
-/// dashboards, and those engines log a warning if you pass any.
-/// (Chỉ `TNSubscriptionCore` đọc phần này: RevenueCat và Adapty lấy offering từ dashboard của họ,
-/// và hai engine đó sẽ ghi cảnh báo nếu bạn truyền vào.)
+/// Read by `TNSubscriptionCore` and `TNSubscriptionQonversion` (Qonversion has deprecated its own
+/// offerings). RevenueCat and Adapty serve offerings from their dashboards, and log a warning if
+/// you pass any.
+/// (Được `TNSubscriptionCore` và `TNSubscriptionQonversion` đọc — Qonversion đã deprecated offering
+/// của chính họ. RevenueCat và Adapty lấy offering từ dashboard, và sẽ ghi cảnh báo nếu bạn truyền vào.)
 public struct TNOffering: Hashable, Sendable {
     /// The offering identifier, e.g. `"default"`, `"sale"`. (ID của offering.)
     public let identifier: String
@@ -90,19 +92,19 @@ public struct TNOffering: Hashable, Sendable {
 /// (Mọi engine đều nhận mọi trường. Trường nào engine không dùng được sẽ bị bỏ qua, và engine ghi
 /// cảnh báo nêu rõ tên trường đó lúc `configure` — để không có thiết lập nào âm thầm vô tác dụng.)
 ///
-/// | Field | RevenueCat | Adapty | Core |
-/// |---|---|---|---|
-/// | `apiKey` | ✅ `appl_…` | ✅ `public_live_…` | — |
-/// | `entitlements` | ✅ | ✅ | ✅ |
-/// | `offerings` | — dashboard | — dashboard | ✅ |
-/// | `currentOfferingIdentifier` | ✅ offering ID | ✅ placement ID | ✅ |
-/// | `customerUserId` | ✅ | ✅ | — |
-/// | `isIAPEnabled` | ✅ | ✅ | ✅ |
-/// | `enableBackendIdentitySync` | ✅ | — | — |
-/// | `observerMode` | — | ✅ | — |
-/// | `attachAppAccountToken` | — | ✅ | ✅ |
-/// | `offlineStoreKitFallback` | always on | ✅ | always on |
-/// | `logLevel` | ✅ | ✅ | ✅ |
+/// | Field | RevenueCat | Adapty | Qonversion | Core |
+/// |---|---|---|---|---|
+/// | `apiKey` | ✅ `appl_…` | ✅ `public_live_…` | ✅ project key | — |
+/// | `entitlements` | ✅ | ✅ | ✅ | ✅ |
+/// | `offerings` | — dashboard | — dashboard | ✅ | ✅ |
+/// | `currentOfferingIdentifier` | ✅ offering ID | ✅ placement ID | ✅ `TNOffering` ID | ✅ |
+/// | `customerUserId` | ✅ | ✅ | ✅ | — |
+/// | `isIAPEnabled` | ✅ | ✅ | ✅ | ✅ |
+/// | `enableBackendIdentitySync` | ✅ | — | — | — |
+/// | `observerMode` | — | ✅ | ✅ | — |
+/// | `attachAppAccountToken` | — | ✅ | — | ✅ |
+/// | `offlineStoreKitFallback` | always on | ✅ | ✅ | always on |
+/// | `logLevel` | ✅ | ✅ | ✅ | ✅ |
 public struct TNSubscriptionConfig: Sendable {
 
     /// The vendor SDK key. RevenueCat: `appl_…`. Adapty: `public_live_…`. Core: unused.
@@ -112,14 +114,16 @@ public struct TNSubscriptionConfig: Sendable {
     /// The entitlements this app sells. (Các quyền lợi app này bán.)
     public let entitlements: [TNEntitlement]
 
-    /// Paywall offerings declared in code — read by `TNSubscriptionCore` only. When empty, Core
-    /// synthesises a `"default"` offering from every product ID.
-    /// (Các offering khai báo trong code — chỉ `TNSubscriptionCore` đọc. Nếu để trống, Core tự sinh
-    /// offering `"default"` từ mọi product ID.)
+    /// Paywall offerings declared in code — read by `TNSubscriptionCore` and
+    /// `TNSubscriptionQonversion`. When empty, a `"default"` offering is synthesised from every
+    /// product ID.
+    /// (Các offering khai báo trong code — được `TNSubscriptionCore` và `TNSubscriptionQonversion` đọc.
+    /// Nếu để trống, offering `"default"` được tự sinh từ mọi product ID.)
     public let offerings: [TNOffering]
 
     /// The offering shown when a paywall does not name one. RevenueCat: an offering ID (`nil` uses
-    /// the dashboard's *current* offering). Adapty: a **placement ID**. Core: a `TNOffering` ID.
+    /// the dashboard's *current* offering). Adapty: a **placement ID**. Core and Qonversion: a
+    /// `TNOffering` ID.
     /// (Offering hiển thị khi paywall không chỉ định. RevenueCat: offering ID (`nil` dùng offering
     /// *current* trên dashboard). Adapty: **placement ID**. Core: ID của `TNOffering`.)
     public let currentOfferingIdentifier: String?
@@ -138,8 +142,8 @@ public struct TNSubscriptionConfig: Sendable {
     /// backend hoặc proxy riêng.)
     public let enableBackendIdentitySync: Bool
 
-    /// Adapty only: observe purchases made by your own StoreKit code instead of making them.
-    /// (Chỉ Adapty: quan sát giao dịch do code StoreKit của bạn thực hiện thay vì tự thực hiện.)
+    /// Adapty and Qonversion: observe purchases made by your own StoreKit code instead of making them.
+    /// (Adapty và Qonversion: quan sát giao dịch do code StoreKit của bạn thực hiện thay vì tự thực hiện.)
     public let observerMode: Bool
 
     /// Send the Keychain `client_id` as StoreKit's `appAccountToken`, so App Store Server
@@ -148,8 +152,8 @@ public struct TNSubscriptionConfig: Sendable {
     /// Notifications quy được về người dùng. Adapty và Core.)
     public let attachAppAccountToken: Bool
 
-    /// When the vendor server is unreachable, unlock from Apple's local transactions. Only Adapty
-    /// lets you turn this off; RevenueCat and Core always use local StoreKit.
+    /// When the vendor server is unreachable, unlock from Apple's local transactions. Adapty and
+    /// Qonversion let you turn this off; RevenueCat and Core always use local StoreKit.
     /// (Khi không kết nối được server của nhà cung cấp, mở khoá từ giao dịch cục bộ của Apple. Chỉ
     /// Adapty cho phép tắt; RevenueCat và Core luôn dùng StoreKit cục bộ.)
     public let offlineStoreKitFallback: Bool
@@ -258,12 +262,13 @@ public struct TNSubscriptionConfig: Sendable {
 
 /// Which engine is reading the config. (Engine nào đang đọc config.)
 package enum TNEngineKind: Sendable {
-    case revenueCat, adapty, storeKit
+    case revenueCat, adapty, qonversion, storeKit
 
     package var displayName: String {
         switch self {
         case .revenueCat: return "TNSubscriptionIOS (RevenueCat)"
         case .adapty: return "TNSubscriptionAdapty (Adapty)"
+        case .qonversion: return "TNSubscriptionQonversion (Qonversion)"
         case .storeKit: return "TNSubscriptionCore (StoreKit 2)"
         }
     }
@@ -298,6 +303,9 @@ extension TNSubscriptionConfig {
         case .adapty:
             if !offerings.isEmpty { ignored.append("offerings are ignored by \(name): offerings are Adapty placements, configured in the dashboard.") }
             if enableBackendIdentitySync { ignored.append("enableBackendIdentitySync is ignored by \(name): it is a RevenueCat feature.") }
+        case .qonversion:
+            if enableBackendIdentitySync { ignored.append("enableBackendIdentitySync is ignored by \(name): it is a RevenueCat feature.") }
+            if attachAppAccountToken { ignored.append("attachAppAccountToken is ignored by \(name).") }
         }
         return ignored
     }

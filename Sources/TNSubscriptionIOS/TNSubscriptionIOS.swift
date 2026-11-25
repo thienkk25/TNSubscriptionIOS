@@ -118,13 +118,26 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
             TNLog.warn(warning)
         }
 
-        // Configure RevenueCat when a non-empty API key is provided
-        if !apiKey.isEmpty {
+        // 3. The shared key check (TNVendorKey) decides what blocks launch, so this engine follows
+        //    the same policy as the others. A key that clearly belongs to another vendor is refused;
+        //    an unfamiliar RevenueCat format is only flagged, because legacy keys have no prefix.
+        let keyProblem = config.isIAPEnabled ? TNVendorKey.check(apiKey, for: .revenueCat) : nil
+        let keyBlocksLaunch = keyProblem?.blocksLaunch(for: .revenueCat) ?? false
+        if let keyProblem, keyProblem != .empty {
+            if keyBlocksLaunch {
+                TNLog.error("\(keyProblem.explanation(for: .revenueCat)) RevenueCat will NOT be configured; offerings and purchases are unavailable.")
+            } else {
+                TNLog.warn(keyProblem.explanation(for: .revenueCat))
+            }
+        }
+
+        // Configure RevenueCat when a usable API key is provided
+        if !apiKey.isEmpty && !keyBlocksLaunch {
             // `customerUserId` becomes RevenueCat's App User ID; `nil` keeps the user anonymous.
             let appUserID = config.customerUserId.flatMap { $0.isEmpty ? nil : $0 }
             Purchases.configure(withAPIKey: apiKey, appUserID: appUserID)
             TNLog.info("RevenueCat configured. entitlements=[\(config.allEntitlementIDs.joined(separator: ", "))], productIDs=\(config.allProductIDs.sorted())")
-        } else {
+        } else if apiKey.isEmpty {
             TNLog.warn("No API key provided — RevenueCat is NOT configured. Offerings and purchases will be unavailable.")
         }
 
@@ -217,7 +230,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
             return
         }
 
-        TNLog.warn("Unrecognized API key prefix. Expected 'appl_' for the App Store, or 'test_' for the RevenueCat Test Store during development.")
+        // Anything else is reported by the shared key check in configure(config:).
     }
     
     private init(config: TNSubscriptionConfig) {

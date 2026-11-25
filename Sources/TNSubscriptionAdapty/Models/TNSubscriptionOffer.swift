@@ -1,22 +1,7 @@
 import Foundation
 import Adapty
 
-// MARK: - TNIntroEligibilityStatus
-
-/// Whether the user may claim a product's introductory offer / free trial.
-/// (Người dùng có đủ điều kiện nhận ưu đãi người mới / dùng thử miễn phí hay không.)
-public enum TNIntroEligibilityStatus: String, Hashable, Sendable {
-    /// Products not loaded yet. (Sản phẩm chưa tải xong.)
-    case unknown
-    /// The user may claim the introductory offer. (Người dùng đủ điều kiện nhận ưu đãi người mới.)
-    case eligible
-    /// Not eligible — already used, or a better offer (win-back, promotional) takes precedence.
-    /// (Không đủ điều kiện — đã dùng rồi, hoặc có ưu đãi tốt hơn (win-back, promotional) được ưu tiên.)
-    case ineligible
-    /// No introductory offer is configured for this product.
-    /// (Sản phẩm này không có ưu đãi người mới nào được cấu hình.)
-    case noIntroOfferExists
-}
+// `TNIntroEligibilityStatus` lives in TNSubscriptionKit. (`TNIntroEligibilityStatus` nằm trong TNSubscriptionKit.)
 
 // MARK: - TNOfferPaymentMode
 

@@ -195,7 +195,7 @@ final class TNEngineContractTests: XCTestCase {
             attachAppAccountToken: true,
             offlineStoreKitFallback: false
         )
-        let engines: [TNEngineKind] = [.revenueCat, .adapty, .storeKit]
+        let engines: [TNEngineKind] = [.revenueCat, .adapty, .qonversion, .storeKit]
         let warnings = engines.map { everything.ignoredSettings(for: $0) }
 
         // Each engine ignores something…

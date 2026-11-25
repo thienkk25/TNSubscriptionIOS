@@ -11,56 +11,6 @@ import Adapty
 /// (Các model của Adapty không có initializer công khai và các lời gọi mạng cần key dự án thật,
 /// nên các quy tắc mapping được tách thành hàm thuần và kiểm thử trực tiếp ở đây.)
 
-// MARK: - API Key
-
-final class TNAdaptyKeyTests: XCTestCase {
-
-    private let validKey = "public_live_" + String(repeating: "a", count: 29)
-
-    func testAValidPublicKeyPasses() {
-        XCTAssertEqual(validKey.count, TNAdaptyKeyProblem.minimumLength)
-        XCTAssertNil(TNAdaptyKeyProblem.check(validKey))
-    }
-
-    func testSurroundingWhitespaceIsTolerated() {
-        // A trailing newline from a pasted .xcconfig value is the commonest invisible mistake.
-        XCTAssertNil(TNAdaptyKeyProblem.check("  \(validKey)\n"))
-    }
-
-    func testEmptyKeyIsRejected() {
-        XCTAssertEqual(TNAdaptyKeyProblem.check(""), .empty)
-        XCTAssertEqual(TNAdaptyKeyProblem.check("   "), .empty)
-    }
-
-    func testASecretKeyIsRejected() {
-        XCTAssertEqual(TNAdaptyKeyProblem.check("secret_live_" + String(repeating: "a", count: 40)), .secretKey)
-    }
-
-    func testARevenueCatKeyIsRecognisedAsSuch() {
-        // The usual slip when switching vendors, and it deserves its own message.
-        XCTAssertEqual(TNAdaptyKeyProblem.check("appl_abcdefghijklmnopqrstuvwxyz"), .revenueCatKey)
-        XCTAssertEqual(TNAdaptyKeyProblem.check("test_abcdefghijklmnopqrstuvwxyz"), .revenueCatKey)
-        XCTAssertEqual(TNAdaptyKeyProblem.check("goog_abcdefghijklmnopqrstuvwxyz"), .revenueCatKey)
-    }
-
-    func testATruncatedKeyIsRejected() {
-        XCTAssertEqual(TNAdaptyKeyProblem.check("public_live_short"), .tooShort)
-    }
-
-    func testAnUnknownPrefixIsRejected() {
-        XCTAssertEqual(TNAdaptyKeyProblem.check(String(repeating: "x", count: 50)), .unrecognisedPrefix)
-    }
-
-    func testEveryProblemExplainsWhatToDo() {
-        let problems: [TNAdaptyKeyProblem] = [.empty, .secretKey, .revenueCatKey, .unrecognisedPrefix, .tooShort]
-        for problem in problems {
-            XCTAssertFalse(problem.explanation.isEmpty)
-        }
-        XCTAssertTrue(TNAdaptyKeyProblem.secretKey.explanation.contains("rotate"),
-                      "A leaked secret key needs rotating, not just replacing in code.")
-    }
-}
-
 // MARK: - Mapping Rules
 
 final class TNAdaptyMappingTests: XCTestCase {
@@ -119,50 +69,6 @@ final class TNAdaptyMappingTests: XCTestCase {
         XCTAssertEqual(TNOfferPaymentMode(.payUpFront), .payUpFront)
         XCTAssertEqual(TNOfferPaymentMode(.payAsYouGo), .payAsYouGo)
         XCTAssertEqual(TNOfferPaymentMode(.unknown), .unknown)
-    }
-}
-
-// MARK: - Packages And Prices
-
-final class TNAdaptyPackageTests: XCTestCase {
-
-    func testPackageTypeInference() {
-        XCTAssertEqual(TNPackageType.inferred(unitDays: 7, value: 1), .weekly)
-        XCTAssertEqual(TNPackageType.inferred(unitDays: 1, value: 7), .weekly)
-        XCTAssertEqual(TNPackageType.inferred(unitDays: 30, value: 1), .monthly)
-        XCTAssertEqual(TNPackageType.inferred(unitDays: 30, value: 3), .threeMonth)
-        XCTAssertEqual(TNPackageType.inferred(unitDays: 30, value: 6), .sixMonth)
-        XCTAssertEqual(TNPackageType.inferred(unitDays: 365, value: 1), .annual)
-        XCTAssertEqual(TNPackageType.inferred(unitDays: 30, value: 12), .annual)
-        XCTAssertEqual(TNPackageType.inferred(unitDays: 1, value: 10), .custom)
-    }
-
-    func testSavingsMathsOnTheWeeklyCaseThatOverflowedDecimal() {
-        // $2/week ≈ $8.57/month vs $30/year = $2.50/month. In TNSubscriptionCore this exact case
-        // overflowed Decimal into nan and showed "SAVE 0%"; it must read 70 here.
-        let weeklyPerMonth = Decimal(2) * Decimal(30) / Decimal(7)
-        let yearlyPerMonth = Decimal(30) / Decimal(12)
-
-        XCTAssertEqual(TNPackage.savingsPercentage(perMonth: yearlyPerMonth, comparedTo: weeklyPerMonth), 70)
-    }
-
-    func testSavingsIsNilWhenNotCheaper() {
-        XCTAssertNil(TNPackage.savingsPercentage(perMonth: 5, comparedTo: 2))
-        XCTAssertNil(TNPackage.savingsPercentage(perMonth: 5, comparedTo: 5))
-        XCTAssertNil(TNPackage.savingsPercentage(perMonth: 1, comparedTo: 0))
-    }
-
-    func testSavingsRejectsNaNInsteadOfReportingZero() {
-        XCTAssertNil(TNPackage.savingsPercentage(perMonth: .nan, comparedTo: 10),
-                     "A nan must surface as 'no badge', never as 'SAVE 0%'.")
-    }
-
-    func testPeriodFormatting() {
-        XCTAssertEqual(TNPeriodFormatter.string(unit: .day, count: 3), "3 Days")
-        XCTAssertEqual(TNPeriodFormatter.string(unit: .week, count: 1), "1 Week")
-        XCTAssertEqual(TNPeriodFormatter.string(unit: .month, count: 1), "1 Month")
-        XCTAssertEqual(TNPeriodFormatter.string(unit: .year, count: 2), "2 Years")
-        XCTAssertEqual(TNPeriodFormatter.string(unit: .month, count: 0), "1 Month", "A zero count is clamped, never rendered.")
     }
 }
 

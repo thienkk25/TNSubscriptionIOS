@@ -13,22 +13,21 @@ import Combine
 // `@MainActor`, nên static của nó sẽ bị cô lập trên main actor và các hàm chống trùng
 // nonisolated không đọc được.)
 //
-// These are deliberately the SAME keys the RevenueCat target (`TNSubscriptionIOS`) uses.
-// Switching billing vendor is the usual reason to adopt this target, and a user who bought
-// coins under RevenueCat must still own them after the app moves to Adapty. The dedup list
-// is shared for the same reason: a transaction credited before the switch must not be
+// These are deliberately the SAME keys in every engine, the RevenueCat one (`TNSubscriptionIOS`)
+// included. Switching billing vendor must never cost a user the coins they bought, and the dedup
+// list is shared for the same reason: a transaction credited before the switch must not be
 // credited again after it.
-// (Đây cố ý là CÙNG key với target RevenueCat (`TNSubscriptionIOS`). Đổi nhà cung cấp là lý do
-// phổ biến nhất để dùng target này, và người đã mua coin dưới RevenueCat vẫn phải còn coin sau
-// khi app chuyển sang Adapty. Danh sách chống trùng dùng chung cũng vì thế: giao dịch đã cộng
-// trước khi đổi thì không được cộng lại sau khi đổi.)
+// (Đây cố ý là CÙNG key ở mọi engine, kể cả engine RevenueCat (`TNSubscriptionIOS`). Đổi nhà cung
+// cấp không bao giờ được làm người dùng mất coin đã mua, và danh sách chống trùng dùng chung cũng vì
+// thế: giao dịch đã cộng trước khi đổi thì không được cộng lại sau khi đổi.)
 private let tnBalanceKeyPrefix = "tn_consumable_balance_"
 private let tnProcessedTxListKey = "tn_consumable_processed_tx_ids"
 private let tnMaxProcessedTxHistory = 200
 
-/// Balance key used by `TNSubscriptionCore`, read once as a migration source.
-/// (Key số dư của `TNSubscriptionCore`, chỉ đọc một lần để migrate.)
-private let tnCoreBalanceKeyPrefix = "tn_core_consumable_balance_"
+/// The keys `TNSubscriptionCore` used up to 1.3.x, read as a migration source only.
+/// (Các key mà `TNSubscriptionCore` dùng tới bản 1.3.x, chỉ đọc để migrate.)
+private let tnLegacyCoreBalanceKeyPrefix = "tn_core_consumable_balance_"
+private let tnLegacyCoreProcessedTxListKey = "tn_core_consumable_processed_tx_ids"
 
 // MARK: - TNConsumableManager
 
@@ -141,15 +140,16 @@ public final class TNConsumableManager: ObservableObject {
     /// Tears down the configured instance, its balances and its dedup history.
     /// (Phá bỏ instance đã cấu hình, số dư và lịch sử chống trùng của nó.)
     ///
-    /// **Test-only**, for the same reason as `TNSubscriptionAdapty.resetForTesting()`.
+    /// **Test-only**, for the same reason as the engines' `resetForTesting()`.
     /// Balances persist in the Keychain, so without this a crediting test would see the
     /// previous test's coins and the dedup list would suppress a legitimate credit.
-    /// (**Chỉ dùng cho test**, vì cùng lý do như `TNSubscriptionAdapty.resetForTesting()`.
+    /// (**Chỉ dùng cho test**, vì cùng lý do như `resetForTesting()` của các engine.
     /// Số dư lưu trong Keychain, nên nếu không có hàm này, một test cộng thưởng sẽ thấy số coin
     /// của test trước và danh sách chống trùng sẽ chặn một lần cộng hợp lệ.)
     internal static func resetForTesting(currencies: [String] = []) {
         resetInstanceForTesting()
         UserDefaults.standard.removeObject(forKey: tnProcessedTxListKey)
+        UserDefaults.standard.removeObject(forKey: tnLegacyCoreProcessedTxListKey)
         for currency in currencies {
             let key = tnBalanceKeyPrefix + currency
             UserDefaults.standard.removeObject(forKey: key)
@@ -177,15 +177,15 @@ public final class TNConsumableManager: ObservableObject {
         // migration from a UserDefaults-only earlier build.
         for currency in Set(products.map(\.currency)) {
             let key = tnBalanceKeyPrefix + currency
-            let coreKey = tnCoreBalanceKeyPrefix + currency
+            let coreKey = tnLegacyCoreBalanceKeyPrefix + currency
             if let stored = TNIdentity.loadFromKeychain(account: key), let value = Int(stored) {
                 balances[currency] = max(0, value)
             } else if let stored = TNIdentity.loadFromKeychain(account: coreKey), let value = Int(stored) {
-                // Coming from TNSubscriptionCore: carry the balance over rather than zero it.
+                // Written by TNSubscriptionCore 1.3.x or earlier: carry it over rather than zero it.
                 let migrated = max(0, value)
                 balances[currency] = migrated
                 TNIdentity.saveToKeychain(account: key, value: "\(migrated)")
-                TNLog.info("[Consumable] Migrated the '\(currency)' balance from TNSubscriptionCore.")
+                TNLog.info("[Consumable] Migrated the '\(currency)' balance from the TNSubscriptionCore 1.3 key.")
             } else {
                 let legacy = max(0, UserDefaults.standard.integer(forKey: key))
                 balances[currency] = legacy
@@ -219,8 +219,13 @@ public final class TNConsumableManager: ObservableObject {
     // MARK: - Transaction Recovery
 
     private nonisolated func isProcessed(_ transactionId: UInt64) -> Bool {
+        let key = "\(transactionId)"
         let list = UserDefaults.standard.stringArray(forKey: tnProcessedTxListKey) ?? []
-        return list.contains("\(transactionId)")
+        if list.contains(key) { return true }
+        // A transaction TNSubscriptionCore 1.3.x credited under its old key is still credited.
+        // (Giao dịch mà TNSubscriptionCore 1.3.x đã cộng dưới key cũ vẫn tính là đã cộng.)
+        let legacy = UserDefaults.standard.stringArray(forKey: tnLegacyCoreProcessedTxListKey) ?? []
+        return legacy.contains(key)
     }
 
     private nonisolated func markProcessed(_ transactionId: UInt64) {

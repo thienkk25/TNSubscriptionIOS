@@ -406,9 +406,8 @@ the published state on their own. (Thay đổi profile — gia hạn, hoàn ti�
    log, nhưng không mở khoá được gì.)
 4. RevenueCat offering IDs become Adapty placement IDs. (Offering ID của RevenueCat thành placement
    ID của Adapty.)
-5. **Consumable balances carry over**: this target reads the same Keychain keys and dedup list as
-   the RevenueCat target. (**Số dư consumable được giữ nguyên**: target này đọc cùng Keychain key và
-   danh sách chống trùng với target RevenueCat.)
+5. **Consumable balances carry over**: every engine reads the same Keychain keys and dedup list.
+   (**Số dư consumable được giữ nguyên**: mọi engine đọc cùng Keychain key và danh sách chống trùng.)
 6. **Rewrite custom paywall code that touches packages.** RevenueCat's `Package` becomes `TNPackage`
    (`package.storeProduct.localizedPriceString` → `package.localizedPriceString`), `CustomerInfo`
    becomes `TNCustomerInfo`, and `introOffer(for:)` returns `TNSubscriptionOffer` instead of
@@ -427,10 +426,11 @@ the published state on their own. (Thay đổi profile — gia hạn, hoàn ti�
 
 Add `apiKey:` to the same config. `offerings:` can stay but is ignored with a warning — recreate
 them as Adapty placements. Drop `configurePromotionalOfferSigner`: Adapty signs. Consumable balances
-are migrated once from Core's keys. (Thêm `apiKey:` vào cùng config đó. `offerings:` để nguyên cũng
+are kept: since 1.4.0 Core uses the same keys as every other engine, and balances from Core 1.3.x
+are migrated once. (Thêm `apiKey:` vào cùng config đó. `offerings:` để nguyên cũng
 được nhưng sẽ bị bỏ qua kèm cảnh báo — hãy tạo lại thành placement trên Adapty. Bỏ
-`configurePromotionalOfferSigner`: Adapty tự ký. Số dư consumable được migrate một lần từ key của
-Core.)
+`configurePromotionalOfferSigner`: Adapty tự ký. Số dư consumable được giữ nguyên: từ 1.4.0 Core dùng
+cùng key với mọi engine khác, và số dư từ Core 1.3.x được migrate một lần.)
 
 Purchases themselves are never lost on any switch: the source of truth is the Apple ID. Until
 Adapty has seen a user's existing App Store history, the offline fallback (§5) still unlocks them

@@ -250,6 +250,11 @@ sai "sắp hết hạn" cho một subscription đang khoẻ là lỗi tệ hơn.
 6. Background call sites: add `await`, or switch to `TNSubscriptionCore.cachedIsPremium`.
 7. If you use promotional offers: install `configurePromotionalOfferSigner(_:)`.
 8. If you use RevenueCat virtual currencies: move to `configureSpendHandler(_:)` + your server.
+9. Consumable balances (`TNConsumableManager`) carry over: since 1.4.0 every engine uses the same
+   Keychain keys and dedup list. Balances written by Core 1.3.x under its old `tn_core_…` keys are
+   migrated once, on first launch. (Số dư consumable được giữ nguyên: từ 1.4.0 mọi engine dùng cùng
+   Keychain key và danh sách chống trùng. Số dư mà Core 1.3.x ghi dưới key cũ `tn_core_…` được migrate
+   một lần, ở lần mở app đầu tiên.)
 
 Existing purchases **lose nothing** in the switch: the source of truth is the Apple ID, not the
 SDK. (Entitlement đã mua **không mất gì** khi đổi: nguồn chân lý là Apple ID, không phải SDK.)

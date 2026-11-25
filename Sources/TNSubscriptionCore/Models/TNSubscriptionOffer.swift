@@ -1,29 +1,7 @@
 import Foundation
 import StoreKit
 
-// MARK: - TNIntroEligibilityStatus
-
-/// Whether the user may claim a product's introductory offer / free trial.
-/// (Người dùng có đủ điều kiện nhận ưu đãi người mới / dùng thử miễn phí hay không.)
-///
-/// StoreKit 2 answers this exactly, per **subscription group**, from the Apple ID's own
-/// purchase history — no server call and no vendor SDK involved.
-/// (StoreKit 2 trả lời chính xác câu hỏi này theo từng **subscription group**, dựa trên
-/// lịch sử mua của Apple ID — không cần gọi server, không cần SDK của bên thứ ba.)
-public enum TNIntroEligibilityStatus: String, Hashable, Sendable {
-    /// Eligibility has not been determined yet (products still loading).
-    /// (Chưa xác định được — sản phẩm vẫn đang tải.)
-    case unknown
-    /// The user may claim the introductory offer.
-    /// (Người dùng đủ điều kiện nhận ưu đãi người mới.)
-    case eligible
-    /// The user has already used the introductory offer for this subscription group.
-    /// (Người dùng đã dùng ưu đãi người mới của group này rồi.)
-    case ineligible
-    /// This product has no introductory offer configured in App Store Connect.
-    /// (Sản phẩm này không có ưu đãi người mới nào được cấu hình trên App Store Connect.)
-    case noIntroOfferExists
-}
+// `TNIntroEligibilityStatus` lives in TNSubscriptionKit. (`TNIntroEligibilityStatus` nằm trong TNSubscriptionKit.)
 
 // MARK: - TNOfferPaymentMode
 

@@ -7,10 +7,13 @@ import Adapty
 
 // MARK: - Shared Configuration
 
-// TNSubscriptionConfig, TNEntitlement, TNOffering, TNLogLevel, DefaultPaywallConfig and
-// TNConsumableProduct live in TNSubscriptionShared, so they are identical in every engine.
-// (Các kiểu cấu hình nằm trong TNSubscriptionShared, nên giống hệt nhau ở mọi engine.)
-@_exported import TNSubscriptionShared
+// The configuration types live in TNSubscriptionShared, and the code this engine shares with the
+// Core and Qonversion engines (consumables, identity, logging, the paywall) in TNSubscriptionKit,
+// which re-exports TNSubscriptionShared.
+// (Các kiểu cấu hình nằm trong TNSubscriptionShared; phần code dùng chung với engine Core và
+// Qonversion — consumable, identity, log, paywall — nằm trong TNSubscriptionKit, module này re-export
+// luôn TNSubscriptionShared.)
+@_exported import TNSubscriptionKit
 
 /// The engine-neutral name for this engine's entry point. Code that uses only the shared
 /// configuration and the common API compiles against any engine unchanged; the exact list is in
@@ -19,40 +22,6 @@ import Adapty
 /// compile được với mọi engine mà không phải sửa; danh sách chính xác nằm trong README, mục "What is
 /// the same, what differs", và được `TNEngineContractTests` bảo đảm.)
 public typealias TNSubscription = TNSubscriptionAdapty
-
-// MARK: - TNEntitlementSnapshot
-
-/// A lock-protected mirror of the entitlement state, readable off the main actor.
-/// (Bản sao trạng thái quyền lợi được bảo vệ bằng lock, đọc được ngoài main actor.)
-final class TNEntitlementSnapshot: @unchecked Sendable {
-
-    static let shared = TNEntitlementSnapshot()
-
-    private let lock = NSLock()
-    private var _isPremium = false
-    private var _activeEntitlements: Set<String> = []
-
-    private init() {}
-
-    var isPremium: Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return _isPremium
-    }
-
-    var activeEntitlements: Set<String> {
-        lock.lock()
-        defer { lock.unlock() }
-        return _activeEntitlements
-    }
-
-    func update(isPremium: Bool, active: Set<String>) {
-        lock.lock()
-        _isPremium = isPremium
-        _activeEntitlements = active
-        lock.unlock()
-    }
-}
 
 // MARK: - Adapty Delegate Proxy
 
@@ -114,14 +83,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
 
     /// The three states a paywall must distinguish. Never show a paywall during `.unknown`.
     /// (Ba trạng thái paywall cần phân biệt. Đừng bao giờ hiện paywall khi đang `.unknown`.)
-    public enum EntitlementState: String, Sendable {
-        /// Not yet determined. (Chưa xác định.)
-        case unknown
-        /// Verified: nothing active. (Đã xác minh: không có gì đang hoạt động.)
-        case locked
-        /// Verified: at least one entitlement active. (Đã xác minh: có ít nhất một quyền lợi hoạt động.)
-        case unlocked
-    }
+    public typealias EntitlementState = TNEntitlementState
 
     @Published public private(set) var entitlementState: EntitlementState = .unknown
     @Published public private(set) var customerInfo: TNCustomerInfo?
@@ -147,7 +109,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
     // MARK: - Internal State
 
     private let config: TNSubscriptionConfig
-    private let keyProblem: TNAdaptyKeyProblem?
+    private let keyProblem: TNKeyProblem?
     private var currentFlow: AdaptyFlow?
     private var loggedFlowIds: Set<String> = []
     private var activationTask: Task<Void, Never>?
@@ -172,7 +134,8 @@ public final class TNSubscriptionAdapty: ObservableObject {
     /// Configures the engine and activates Adapty. Call once, at launch.
     /// (Cấu hình engine và kích hoạt Adapty. Gọi một lần, khi khởi động.)
     public static func configure(config: TNSubscriptionConfig) {
-        TNLog.level = config.logLevel
+        logLevel = config.logLevel
+        TNLog.setCategory("TNSubscriptionAdapty")
         TNLog.bridgeAdaptyLogs()
 
         guard shared == nil else {
@@ -180,9 +143,17 @@ public final class TNSubscriptionAdapty: ObservableObject {
             return
         }
 
-        let keyProblem = config.isIAPEnabled ? TNAdaptyKeyProblem.check(config.apiKey) : nil
-        if let keyProblem {
-            TNLog.error("\(keyProblem.explanation) Adapty will NOT be activated; entitlements fall back to local StoreKit and purchases are disabled.")
+        // The shared check decides both what is wrong and whether it blocks launch, so every
+        // engine follows the same policy. Only a blocking problem is kept: it is what stops the SDK.
+        let detected = config.isIAPEnabled ? TNVendorKey.check(config.apiKey, for: .adapty) : nil
+        var keyProblem: TNKeyProblem?
+        if let detected {
+            if detected.blocksLaunch(for: .adapty) {
+                keyProblem = detected
+                TNLog.error("\(detected.explanation(for: .adapty)) Adapty will NOT be activated; entitlements fall back to local StoreKit and purchases are disabled.")
+            } else {
+                TNLog.warn(detected.explanation(for: .adapty))
+            }
         }
         validate(config)
         for warning in config.ignoredSettings(for: .adapty) {
@@ -200,7 +171,10 @@ public final class TNSubscriptionAdapty: ObservableObject {
     /// (Mức độ log, áp dụng cho cả package này và Adapty SDK.)
     public static var logLevel: TNLogLevel {
         get { TNLog.level }
-        set { TNLog.level = newValue }
+        set {
+            TNLog.level = newValue
+            Adapty.logLevel = newValue.adaptyLevel
+        }
     }
 
     /// Routes this package's and Adapty's logs into your own logging stack.
@@ -235,7 +209,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
 
     // MARK: - Init
 
-    private init(config: TNSubscriptionConfig, keyProblem: TNAdaptyKeyProblem?) {
+    private init(config: TNSubscriptionConfig, keyProblem: TNKeyProblem?) {
         self.config = config
         self.keyProblem = keyProblem
         self.currentOfferingIdentifier = config.currentOfferingIdentifier
@@ -383,12 +357,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
 
     /// Guesses a plan name from a product ID. (Đoán tên gói từ product ID.)
     public static func displayName(forProductID productID: String) -> String {
-        let lower = productID.lowercased()
-        if lower.contains("week") { return NSLocalizedString("Weekly", comment: "") }
-        if lower.contains("month") { return NSLocalizedString("Monthly", comment: "") }
-        if lower.contains("year") || lower.contains("annual") { return NSLocalizedString("Yearly", comment: "") }
-        if lower.contains("life") || lower.contains("forever") { return NSLocalizedString("Lifetime", comment: "") }
-        return NSLocalizedString("Premium", comment: "")
+        TNPackageType.displayName(forProductID: productID)
     }
 
     // MARK: - Identity
@@ -560,13 +529,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
     /// (Mở khoá ngay khi khởi động dựa trên kết quả đã xác minh lần trước, chỉ tin bản ghi còn hạn.
     /// Quyền vĩnh viễn được lưu bằng distant future.)
     private func applyWarmStartCache() {
-        guard let raw = UserDefaults.standard.dictionary(forKey: entitlementCacheKey) else { return }
-        let now = Date()
-        var stillValid: Set<String> = []
-        for (id, value) in raw {
-            guard let timestamp = value as? Double else { continue }
-            if Date(timeIntervalSince1970: timestamp) > now { stillValid.insert(id) }
-        }
+        let stillValid = TNEntitlementCache.unexpired(key: entitlementCacheKey)
         guard !stillValid.isEmpty else { return }
         activeEntitlements = stillValid
         isPremium = true
@@ -576,19 +539,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
     }
 
     private func persistEntitlementCache(from info: TNCustomerInfo) {
-        let active = info.entitlements.active
-        guard !active.isEmpty else {
-            UserDefaults.standard.removeObject(forKey: entitlementCacheKey)
-            return
-        }
-        // Every value a Double: NSNull is not a property-list type and would make UserDefaults
-        // reject the whole dictionary — which is exactly how lifetime buyers lost their warm start
-        // in TNSubscriptionCore before 1.2.0.
-        var payload: [String: Double] = [:]
-        for (id, entitlement) in active {
-            payload[id] = (entitlement.expirationDate ?? .distantFuture).timeIntervalSince1970
-        }
-        UserDefaults.standard.set(payload, forKey: entitlementCacheKey)
+        TNEntitlementCache.store(info.entitlements.active.mapValues(\.expirationDate), key: entitlementCacheKey)
     }
 
     // MARK: - Placements (Offerings)
@@ -625,7 +576,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
         guard isAdaptyActivated else {
             availablePackages = []
             offeringsError = NSLocalizedString("Plans could not be loaded.", comment: "")
-            TNLog.error("loadOfferings skipped: Adapty is not activated (\(keyProblem?.explanation ?? entitlementError ?? "activation failed")).")
+            TNLog.error("loadOfferings skipped: Adapty is not activated (\(keyProblem?.explanation(for: .adapty) ?? entitlementError ?? "activation failed")).")
             return
         }
 
@@ -773,7 +724,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
     public func purchaseAsync(package: TNPackage) async throws -> TNCustomerInfo {
         await awaitActivation()
         guard isAdaptyActivated else {
-            TNLog.error("Purchase refused: Adapty is not activated (\(keyProblem?.explanation ?? entitlementError ?? "activation failed")).")
+            TNLog.error("Purchase refused: Adapty is not activated (\(keyProblem?.explanation(for: .adapty) ?? entitlementError ?? "activation failed")).")
             throw TNPurchaseError.notActivated
         }
 
@@ -879,59 +830,21 @@ public final class TNSubscriptionAdapty: ObservableObject {
     /// Presents Apple's Manage Subscriptions sheet, falling back to the App Store page.
     /// (Hiển thị bảng Quản lý đăng ký của Apple, nếu không được thì mở trang App Store.)
     public func showManageSubscriptions() {
-        Task {
-            if let scene = Self.activeWindowScene() {
-                do {
-                    try await AppStore.showManageSubscriptions(in: scene)
-                    return
-                } catch {
-                    TNLog.warn("showManageSubscriptions failed (\(error.localizedDescription)); opening the App Store URL instead.")
-                }
-            }
-            if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
-                await UIApplication.shared.open(url)
-            }
-        }
+        TNAppStoreSheets.showManageSubscriptions()
     }
 
     /// Presents Apple's refund request sheet for an owned App Store product.
     /// (Hiển thị bảng yêu cầu hoàn tiền của Apple cho một sản phẩm App Store đang sở hữu.)
     @discardableResult
     public func requestRefund(for productID: String) async -> Bool {
-        guard let scene = Self.activeWindowScene() else { return false }
-        var transactionID: UInt64?
-        for await result in StoreKit.Transaction.currentEntitlements {
-            if case .verified(let transaction) = result, transaction.productID == productID {
-                transactionID = transaction.id
-                break
-            }
-        }
-        guard let transactionID else {
-            TNLog.warn("requestRefund(for:) found no App Store transaction for \(productID). Purchases from other platforms are refunded there.")
-            return false
-        }
-        do {
-            return try await StoreKit.Transaction.beginRefundRequest(for: transactionID, in: scene) == .success
-        } catch {
-            TNLog.error("Presenting the refund sheet FAILED: \(error.localizedDescription)")
-            return false
-        }
-    }
-
-    static func activeWindowScene() -> UIWindowScene? {
-        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
-        return scenes.first { $0.activationState == .foregroundActive } ?? scenes.first
+        await TNAppStoreSheets.requestRefund(for: productID)
     }
 
     // MARK: - Paywall Helpers
 
     /// The genuinely cheapest plan per month. (Gói thật sự rẻ nhất tính theo tháng.)
     public var recommendedPackage: TNPackage? {
-        let subscriptions = availablePackages.filter { $0.pricePerMonth != nil }
-        guard !subscriptions.isEmpty else { return availablePackages.first }
-        return subscriptions.min {
-            ($0.pricePerMonth ?? .greatestFiniteMagnitude) < ($1.pricePerMonth ?? .greatestFiniteMagnitude)
-        }
+        TNPriceMath.recommended(availablePackages, pricePerMonth: \.pricePerMonth)
     }
 
     /// `true` when this package is the recommended one. (`true` khi đây là gói được đề xuất.)
@@ -948,7 +861,7 @@ public final class TNSubscriptionAdapty: ObservableObject {
         shared?.activationTask?.cancel()
         shared = nil
         if !preserveCache {
-            UserDefaults.standard.removeObject(forKey: "tn_adapty_cachedEntitlements")
+            TNEntitlementCache.clear(key: "tn_adapty_cachedEntitlements")
         }
         TNEntitlementSnapshot.shared.update(isPremium: false, active: [])
     }

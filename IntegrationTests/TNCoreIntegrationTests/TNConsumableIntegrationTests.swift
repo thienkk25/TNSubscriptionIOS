@@ -2,6 +2,7 @@ import XCTest
 import StoreKit
 import StoreKitTest
 @testable import TNSubscriptionCore
+@testable import TNSubscriptionKit
 
 /// Consumable purchases and the balance ledger.
 /// (Mua consumable và sổ số dư.)
@@ -59,7 +60,7 @@ final class TNConsumableIntegrationTests: TNCoreIntegrationTestCase {
 
         // The dedup list records every transaction the manager actually credited, so it says
         // precisely whether StoreKitTest handed us two distinct transactions or replayed one.
-        let credited = UserDefaults.standard.stringArray(forKey: "tn_core_consumable_processed_tx_ids") ?? []
+        let credited = UserDefaults.standard.stringArray(forKey: "tn_consumable_processed_tx_ids") ?? []
 
         XCTAssertEqual(
             credited.count, 2,

@@ -26,6 +26,13 @@ let package = Package(
             name: "TNSubscriptionAdapty",
             targets: ["TNSubscriptionAdapty"]
         ),
+        // Qonversion engine: StoreKit 2 + Qonversion (server-validated entitlements,
+        // cross-platform profiles, analytics), with offerings declared in code because
+        // Qonversion has deprecated its own.
+        .library(
+            name: "TNSubscriptionQonversion",
+            targets: ["TNSubscriptionQonversion"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/RevenueCat/purchases-ios-spm.git", from: "5.0.0"),
@@ -33,6 +40,8 @@ let package = Package(
         // Xcode 26+. That costs shipping apps nothing: App Store Connect has only accepted
         // Xcode 26 builds since 28 April 2026.
         .package(url: "https://github.com/adaptyteam/AdaptySDK-iOS.git", from: "4.4.0"),
+        // swift-tools-version 5.9 and iOS 13+, so it adds no toolchain requirement.
+        .package(url: "https://github.com/qonversion/qonversion-ios-sdk.git", from: "6.18.0"),
     ],
     targets: [
         // The configuration types every engine shares: TNSubscriptionConfig, TNEntitlement,
@@ -41,6 +50,16 @@ let package = Package(
         // No dependencies, and not a product: each engine re-exports it.
         .target(
             name: "TNSubscriptionShared"
+        ),
+        // Code that is the same in every engine that runs StoreKit 2 itself (Core, Adapty,
+        // Qonversion): logging, identity, consumables, the warm-start cache, Apple sheets, price
+        // maths and the built-in paywall. Not a product, and not used by the RevenueCat engine,
+        // which keeps its own versions for backward compatibility.
+        // (Phần giống hệt nhau ở mọi engine tự chạy StoreKit 2 — Core, Adapty, Qonversion. Không
+        // phải product, và engine RevenueCat không dùng vì giữ bản riêng để tương thích ngược.)
+        .target(
+            name: "TNSubscriptionKit",
+            dependencies: ["TNSubscriptionShared"]
         ),
         .target(
             name: "TNSubscriptionIOS",
@@ -55,7 +74,7 @@ let package = Package(
         // NOTE: only the shared module — this target must never link a vendor SDK.
         .target(
             name: "TNSubscriptionCore",
-            dependencies: ["TNSubscriptionShared"],
+            dependencies: ["TNSubscriptionKit"],
             resources: [
                 .process("PrivacyInfo.xcprivacy")
             ]
@@ -65,8 +84,21 @@ let package = Package(
         .target(
             name: "TNSubscriptionAdapty",
             dependencies: [
-                "TNSubscriptionShared",
+                "TNSubscriptionKit",
                 .product(name: "Adapty", package: "AdaptySDK-iOS"),
+            ],
+            resources: [
+                .process("PrivacyInfo.xcprivacy")
+            ]
+        ),
+        // NOTE: `QonversionNoIdfa`, not `Qonversion`. The default product also links an IDFA
+        // reader (AdSupport), which changes an app's App Store privacy answers; an app that wants
+        // IDFA can add `QonversionIDFA` itself. Depends on no other engine.
+        .target(
+            name: "TNSubscriptionQonversion",
+            dependencies: [
+                "TNSubscriptionKit",
+                .product(name: "QonversionNoIdfa", package: "qonversion-ios-sdk"),
             ],
             resources: [
                 .process("PrivacyInfo.xcprivacy")
@@ -86,6 +118,19 @@ let package = Package(
         .testTarget(
             name: "TNSubscriptionAdaptyTests",
             dependencies: ["TNSubscriptionAdapty"]
+        ),
+        .testTarget(
+            name: "TNSubscriptionQonversionTests",
+            dependencies: ["TNSubscriptionQonversion"]
+        ),
+        // Logic that lives once, in the shared module — tested once, here.
+        .testTarget(
+            name: "TNSubscriptionSharedTests",
+            dependencies: ["TNSubscriptionShared"]
+        ),
+        .testTarget(
+            name: "TNSubscriptionKitTests",
+            dependencies: ["TNSubscriptionKit"]
         ),
     ]
 )

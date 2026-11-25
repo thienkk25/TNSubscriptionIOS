@@ -7,18 +7,18 @@ import UIKit
 /// A persistent device/client identity, stored in the Keychain so it survives app reinstalls.
 /// (Danh tính client/thiết bị cố định, lưu trong Keychain nên vẫn còn sau khi cài lại app.)
 ///
-/// **Optional.** Nothing in this engine needs it: entitlements come from Apple alone.
+/// **Optional.** No engine needs it: entitlements come from Apple or the billing vendor.
 /// It exists for apps that *also* call their own backend and want a stable caller ID,
 /// or that want `appAccountToken` on purchases so App Store Server Notifications can be
 /// attributed to a user.
-/// (**Không bắt buộc.** Engine này không cần nó: quyền lợi lấy trực tiếp từ Apple.
+/// (**Không bắt buộc.** Không engine nào cần nó: quyền lợi lấy từ Apple hoặc nhà cung cấp.
 /// Nó dành cho app *đồng thời* gọi backend riêng và cần một ID gọi cố định, hoặc muốn gắn
 /// `appAccountToken` vào giao dịch để App Store Server Notifications quy được về user.)
 public enum TNIdentity {
 
     private static let clientIdKeychainAccount = "client_id"
     private static let clientIdUserDefaultsKey = "persistent_client_id"
-    internal static let keychainService: String = Bundle.main.bundleIdentifier ?? "com.tnsubscription.core"
+    package static let keychainService: String = Bundle.main.bundleIdentifier ?? "com.tnsubscription"
 
     private static let lock = NSLock()
     private static var cachedClientId: String?
@@ -102,7 +102,7 @@ public enum TNIdentity {
 
     /// Reads a string from the Keychain. Returns `nil` when absent or unreadable.
     /// (Đọc một string từ Keychain. Trả về `nil` nếu không có hoặc không đọc được.)
-    internal static func loadFromKeychain(account: String) -> String? {
+    package static func loadFromKeychain(account: String) -> String? {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: keychainService,
@@ -133,7 +133,7 @@ public enum TNIdentity {
     /// background launch, after the device has been unlocked at least once since boot.
     /// (Dùng `kSecAttrAccessibleAfterFirstUnlock` để vẫn đọc được khi app khởi động ở
     /// background, miễn là thiết bị đã được mở khoá ít nhất một lần sau khi bật máy.)
-    internal static func saveToKeychain(account: String, value: String) {
+    package static func saveToKeychain(account: String, value: String) {
         guard let data = value.data(using: .utf8) else { return }
 
         let baseQuery: [String: Any] = [
