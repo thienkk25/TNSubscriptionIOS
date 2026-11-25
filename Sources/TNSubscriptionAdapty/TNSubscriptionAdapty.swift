@@ -7,13 +7,11 @@ import Adapty
 
 // MARK: - Shared Configuration
 
-// The configuration types live in TNSubscriptionShared, and the code this engine shares with the
-// Core and Qonversion engines (consumables, identity, logging, the paywall) in TNSubscriptionKit,
-// which re-exports TNSubscriptionShared.
-// (Các kiểu cấu hình nằm trong TNSubscriptionShared; phần code dùng chung với engine Core và
-// Qonversion — consumable, identity, log, paywall — nằm trong TNSubscriptionKit, module này re-export
-// luôn TNSubscriptionShared.)
-@_exported import TNSubscriptionKit
+// Everything this engine shares with the other engines — configuration, consumables, identity,
+// logging, the paywall — lives in TNSubscriptionShared.
+// (Mọi thứ engine này dùng chung với các engine khác — cấu hình, consumable, identity, log, paywall —
+// nằm trong TNSubscriptionShared.)
+@_exported import TNSubscriptionShared
 
 /// The engine-neutral name for this engine's entry point. Code that uses only the shared
 /// configuration and the common API compiles against any engine unchanged; the exact list is in
@@ -487,35 +485,17 @@ public final class TNSubscriptionAdapty: ObservableObject {
     /// Reads Apple's verified local entitlements and maps them through `TNEntitlement.productIDs`.
     /// (Đọc quyền lợi cục bộ đã xác minh của Apple và map qua `TNEntitlement.productIDs`.)
     private func buildFromStoreKit() async -> TNCustomerInfo {
+        let grants = await TNStoreKitGrants.current(for: config.entitlements)
         var infos: [String: TNEntitlementInfo] = [:]
-        var owned: Set<String> = []
-        var subscriptions: Set<String> = []
-        let now = Date()
-
-        for await result in StoreKit.Transaction.currentEntitlements {
-            guard case .verified(let transaction) = result else { continue }
-            guard transaction.revocationDate == nil else { continue }
-            if let expiry = transaction.expirationDate, expiry <= now { continue }
-
-            owned.insert(transaction.productID)
-            if transaction.productType == .autoRenewable { subscriptions.insert(transaction.productID) }
-
-            for entitlement in config.entitlements where entitlement.productIDs.contains(transaction.productID) {
-                let candidate = TNEntitlementInfo(entitlementId: entitlement.id, transaction: transaction)
-                // Prefer the grant that lasts longest; a lifetime purchase (no expiry) beats all.
-                if let existing = infos[entitlement.id],
-                   (existing.expirationDate ?? .distantFuture) >= (candidate.expirationDate ?? .distantFuture) {
-                    continue
-                }
-                infos[entitlement.id] = candidate
-            }
+        for (entitlementId, transaction) in grants.transactions {
+            infos[entitlementId] = TNEntitlementInfo(entitlementId: entitlementId, transaction: transaction)
         }
 
         return TNCustomerInfo(
             entitlements: TNEntitlementInfos(all: infos),
-            activeSubscriptions: subscriptions,
-            allPurchasedProductIdentifiers: owned,
-            nonSubscriptionProductIdentifiers: owned.subtracting(subscriptions),
+            activeSubscriptions: grants.subscriptionProductIDs,
+            allPurchasedProductIdentifiers: grants.ownedProductIDs,
+            nonSubscriptionProductIdentifiers: grants.ownedProductIDs.subtracting(grants.subscriptionProductIDs),
             latestExpirationDate: infos.values.compactMap(\.expirationDate).max(),
             originalPurchaseDate: infos.values.compactMap(\.originalPurchaseDate).min(),
             source: .storeKitFallback

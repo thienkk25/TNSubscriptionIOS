@@ -1,8 +1,8 @@
 import Foundation
 import StoreKit
 
-// `TNPackageType`, the price maths and the period helpers live in TNSubscriptionKit.
-// (`TNPackageType`, phần tính giá và helper kỳ hạn nằm trong TNSubscriptionKit.)
+// `TNPackageType`, the price maths and the period helpers live in TNSubscriptionShared.
+// (`TNPackageType`, phần tính giá và helper kỳ hạn nằm trong TNSubscriptionShared.)
 
 // MARK: - TNPackage
 

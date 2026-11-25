@@ -14,6 +14,13 @@ import UIKit
 /// (**Không bắt buộc.** Không engine nào cần nó: quyền lợi lấy từ Apple hoặc nhà cung cấp.
 /// Nó dành cho app *đồng thời* gọi backend riêng và cần một ID gọi cố định, hoặc muốn gắn
 /// `appAccountToken` vào giao dịch để App Store Server Notifications quy được về user.)
+///
+/// Every engine reads the same Keychain item, so the ID survives a switch of engine. Items are
+/// written `AfterFirstUnlockThisDeviceOnly`: they survive a reinstall but are not carried to a new
+/// device through a backup — the behaviour the RevenueCat engine has always had.
+/// (Mọi engine đọc cùng một Keychain item, nên ID còn nguyên khi đổi engine. Item được ghi với
+/// `AfterFirstUnlockThisDeviceOnly`: còn sau khi cài lại app nhưng không theo bản sao lưu sang máy
+/// mới — đúng hành vi engine RevenueCat vẫn có từ trước.)
 public enum TNIdentity {
 
     private static let clientIdKeychainAccount = "client_id"
@@ -76,8 +83,12 @@ public enum TNIdentity {
     /// from this vendor. Not durable — prefer `clientId`.
     /// (Vendor identifier theo lần cài, bị reset khi người dùng xoá hết app của cùng nhà phát triển.
     /// Không bền — nên ưu tiên `clientId`.)
+    /// Empty in the rare moment the system has no vendor identifier yet (before first unlock);
+    /// `identityHeaders` then leaves `X-Device-Id` out rather than send a fake value.
+    /// (Rỗng trong khoảnh khắc hiếm hoi hệ thống chưa có vendor identifier — trước lần mở khoá đầu;
+    /// khi đó `identityHeaders` bỏ `X-Device-Id` thay vì gửi giá trị giả.)
     public static var deviceId: String {
-        UIDevice.current.identifierForVendor?.uuidString ?? clientId
+        UIDevice.current.identifierForVendor?.uuidString ?? ""
     }
 
     /// Standard identity headers for your own backend.
@@ -88,10 +99,11 @@ public enum TNIdentity {
     /// request = request.applyingTNIdentityHeaders()
     /// ```
     public static func identityHeaders(userId: String? = nil) -> [String: String] {
-        var headers = [
-            "X-Client-Id": clientId,
-            "X-Device-Id": deviceId,
-        ]
+        var headers = ["X-Client-Id": clientId]
+        let device = deviceId
+        if !device.isEmpty {
+            headers["X-Device-Id"] = device
+        }
         if let userId, !userId.isEmpty {
             headers["X-User-Id"] = userId
         }
@@ -114,25 +126,41 @@ public enum TNIdentity {
         var item: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &item)
 
-        guard status == errSecSuccess else {
-            if status != errSecItemNotFound {
-                TNLog.warn("Reading '\(account)' from the Keychain failed with OSStatus \(status).")
-            }
+        if status == errSecSuccess, let data = item as? Data,
+           let value = String(data: data, encoding: .utf8), !value.isEmpty {
+            return value
+        }
+        if status != errSecSuccess, status != errSecItemNotFound {
+            TNLog.warn("Reading '\(account)' from the Keychain failed with OSStatus \(status).")
+        }
+
+        // Early RevenueCat-engine builds wrote items without a service; read one once and move it
+        // under the service so it is found directly next time.
+        // (Các bản đầu của engine RevenueCat ghi item không có service; đọc một lần rồi chuyển nó vào
+        // service để lần sau tìm thấy ngay.)
+        let legacyQuery: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var legacyItem: CFTypeRef?
+        guard SecItemCopyMatching(legacyQuery as CFDictionary, &legacyItem) == errSecSuccess,
+              let data = legacyItem as? Data,
+              let legacy = String(data: data, encoding: .utf8), !legacy.isEmpty else {
             return nil
         }
-        guard let data = item as? Data, let value = String(data: data, encoding: .utf8) else {
-            return nil
-        }
-        return value
+        saveToKeychain(account: account, value: legacy)
+        return legacy
     }
 
     /// Writes a string to the Keychain, replacing any existing value for the same account.
     /// (Ghi một string vào Keychain, thay thế giá trị cũ của cùng account.)
     ///
-    /// Uses `kSecAttrAccessibleAfterFirstUnlock` so the value is readable during a
-    /// background launch, after the device has been unlocked at least once since boot.
-    /// (Dùng `kSecAttrAccessibleAfterFirstUnlock` để vẫn đọc được khi app khởi động ở
-    /// background, miễn là thiết bị đã được mở khoá ít nhất một lần sau khi bật máy.)
+    /// Uses `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: readable during a background launch
+    /// once the device has been unlocked since boot, and never restored onto another device.
+    /// (Dùng `kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly`: đọc được khi app khởi động ở
+    /// background sau lần mở khoá đầu kể từ khi bật máy, và không bao giờ được khôi phục sang máy khác.)
     package static func saveToKeychain(account: String, value: String) {
         guard let data = value.data(using: .utf8) else { return }
 
@@ -144,7 +172,7 @@ public enum TNIdentity {
 
         let attributes: [String: Any] = [
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
         ]
 
         let updateStatus = SecItemUpdate(baseQuery as CFDictionary, attributes as CFDictionary)
@@ -153,7 +181,7 @@ public enum TNIdentity {
         if updateStatus == errSecItemNotFound {
             var addQuery = baseQuery
             addQuery[kSecValueData as String] = data
-            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlock
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
             let addStatus = SecItemAdd(addQuery as CFDictionary, nil)
             if addStatus != errSecSuccess {
                 TNLog.warn("Writing '\(account)' to the Keychain failed with OSStatus \(addStatus).")
@@ -168,6 +196,13 @@ public enum TNIdentity {
 // MARK: - URLRequest Convenience
 
 public extension URLRequest {
+
+    /// Attaches `identityHeaders(userId:)` to this request. (Gắn `identityHeaders(userId:)` vào request.)
+    mutating func applyTNIdentityHeaders(userId: String? = nil) {
+        for (key, value) in TNIdentity.identityHeaders(userId: userId) {
+            setValue(value, forHTTPHeaderField: key)
+        }
+    }
 
     /// Returns a copy of this request with `X-Client-Id`, `X-Device-Id` and optionally
     /// `X-User-Id` applied.

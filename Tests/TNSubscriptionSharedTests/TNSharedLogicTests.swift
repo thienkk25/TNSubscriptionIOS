@@ -1,10 +1,9 @@
 import XCTest
 import StoreKit
-@testable import TNSubscriptionKit
+@testable import TNSubscriptionShared
 
-/// Tests for the code Core, Adapty and Qonversion share — run once, here, instead of once per engine.
-/// (Test cho phần code mà Core, Adapty và Qonversion dùng chung — chạy một lần ở đây thay vì mỗi
-/// engine một lần.)
+/// Tests for the logic every engine shares — run once, here, instead of once per engine.
+/// (Test cho phần logic mọi engine dùng chung — chạy một lần ở đây thay vì mỗi engine một lần.)
 
 // MARK: - Package Type
 
@@ -284,5 +283,30 @@ final class TNEntitlementCacheTests: XCTestCase {
         TNEntitlementCache.store(["live": Date().addingTimeInterval(3600)], key: key)
         TNEntitlementCache.store([:], key: key)
         XCTAssertNil(UserDefaults.standard.dictionary(forKey: key))
+    }
+}
+
+// MARK: - StoreKit Grants And Offers
+
+final class TNStoreKitRulesTests: XCTestCase {
+
+    func testALifetimePurchaseOutlastsAnySubscription() {
+        let year = Date().addingTimeInterval(365 * 86_400)
+        XCTAssertTrue(TNStoreKitGrants.lastsLonger(nil, than: year))
+        XCTAssertFalse(TNStoreKitGrants.lastsLonger(year, than: nil))
+        XCTAssertFalse(TNStoreKitGrants.lastsLonger(nil, than: nil), "A tie keeps the grant already chosen.")
+    }
+
+    func testTheLaterExpiryWins() {
+        let soon = Date().addingTimeInterval(86_400)
+        let later = Date().addingTimeInterval(30 * 86_400)
+        XCTAssertTrue(TNStoreKitGrants.lastsLonger(later, than: soon))
+        XCTAssertFalse(TNStoreKitGrants.lastsLonger(soon, than: later))
+        XCTAssertFalse(TNStoreKitGrants.lastsLonger(soon, than: soon))
+    }
+
+    func testOfferSummaryWording() {
+        XCTAssertEqual(TNOfferRules.summary(isFreeTrial: true, localizedPrice: "$0.00", periodText: "3 Days"), "3 Days Free Trial")
+        XCTAssertEqual(TNOfferRules.summary(isFreeTrial: false, localizedPrice: "$0.99", periodText: "1 Month"), "$0.99 for 1 Month")
     }
 }

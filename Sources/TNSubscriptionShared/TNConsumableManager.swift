@@ -6,13 +6,6 @@ import Combine
 
 // MARK: - Storage Keys
 
-// These live at file scope rather than as static members: `TNConsumableManager` is
-// `@MainActor`, which would make its statics main-actor isolated and therefore unreadable
-// from the nonisolated dedup helpers.
-// (Các key này đặt ở phạm vi file thay vì làm static member: `TNConsumableManager` là
-// `@MainActor`, nên static của nó sẽ bị cô lập trên main actor và các hàm chống trùng
-// nonisolated không đọc được.)
-//
 // These are deliberately the SAME keys in every engine, the RevenueCat one (`TNSubscriptionIOS`)
 // included. Switching billing vendor must never cost a user the coins they bought, and the dedup
 // list is shared for the same reason: a transaction credited before the switch must not be
@@ -28,6 +21,9 @@ private let tnMaxProcessedTxHistory = 200
 /// (Các key mà `TNSubscriptionCore` dùng tới bản 1.3.x, chỉ đọc để migrate.)
 private let tnLegacyCoreBalanceKeyPrefix = "tn_core_consumable_balance_"
 private let tnLegacyCoreProcessedTxListKey = "tn_core_consumable_processed_tx_ids"
+/// Per-transaction flags from the earliest RevenueCat-engine builds, read once and folded into the list.
+/// (Cờ theo từng giao dịch từ các bản đầu của engine RevenueCat, đọc một lần rồi gộp vào danh sách.)
+private let tnLegacyTxFlagPrefix = "tn_consumable_tx_"
 
 // MARK: - TNConsumableManager
 
@@ -70,7 +66,14 @@ private let tnLegacyCoreProcessedTxListKey = "tn_core_consumable_processed_tx_id
 /// let coins = TNConsumableManager.shared.balance(for: "coins")
 /// TNConsumableManager.shared.deductBalance(10, for: "coins")
 /// ```
-@MainActor
+///
+/// ### Isolation (Cô lập luồng)
+/// Everything that changes state — purchasing, loading, crediting, spending — is `@MainActor`.
+/// Reads (`balance(for:)`, `canAfford`, the product lookups) are not, so existing call sites in any
+/// engine keep compiling. This one class serves all four engines.
+/// (Mọi thao tác thay đổi trạng thái — mua, tải, cộng, tiêu — là `@MainActor`. Các thao tác đọc
+/// (`balance(for:)`, `canAfford`, tra sản phẩm) thì không, để code đang có ở mọi engine vẫn compile.
+/// Một class này phục vụ cả bốn engine.)
 public final class TNConsumableManager: ObservableObject {
 
     // MARK: - Singleton
@@ -87,23 +90,23 @@ public final class TNConsumableManager: ObservableObject {
 
     /// StoreKit products loaded from the App Store, cheapest first.
     /// (Sản phẩm StoreKit đã tải từ App Store, rẻ nhất trước.)
-    @Published public private(set) var storeProducts: [Product] = []
+    @Published public var storeProducts: [Product] = []
 
     /// `true` while products are loading.
     /// (`true` trong lúc đang tải sản phẩm.)
-    @Published public private(set) var isLoadingProducts = false
+    @Published public var isLoadingProducts = false
 
     /// `true` while a purchase is in flight.
     /// (`true` trong lúc một giao dịch đang diễn ra.)
-    @Published public private(set) var isPurchasing = false
+    @Published public var isPurchasing = false
 
     /// Current balances, keyed by currency name.
     /// (Số dư hiện tại, theo tên loại tiền.)
-    @Published public private(set) var balances: [String: Int] = [:]
+    @Published public var balances: [String: Int] = [:]
 
     /// Why the last product load failed, or `nil` on success.
     /// (Lý do lần tải sản phẩm gần nhất thất bại, hoặc `nil` nếu thành công.)
-    @Published public private(set) var loadError: String?
+    @Published public var loadError: String?
 
     // MARK: - Internal
 
@@ -146,6 +149,7 @@ public final class TNConsumableManager: ObservableObject {
     /// (**Chỉ dùng cho test**, vì cùng lý do như `resetForTesting()` của các engine.
     /// Số dư lưu trong Keychain, nên nếu không có hàm này, một test cộng thưởng sẽ thấy số coin
     /// của test trước và danh sách chống trùng sẽ chặn một lần cộng hợp lệ.)
+    @MainActor
     internal static func resetForTesting(currencies: [String] = []) {
         resetInstanceForTesting()
         UserDefaults.standard.removeObject(forKey: tnProcessedTxListKey)
@@ -164,6 +168,7 @@ public final class TNConsumableManager: ObservableObject {
     /// to test that a balance survives one and that recovery does not re-credit.
     /// (**Chỉ dùng cho test.** Đây đúng là những gì xảy ra khi mở lại app, nên nó là cách duy
     /// nhất để kiểm tra số dư còn nguyên sau khi mở lại và recovery không cộng thưởng lần hai.)
+    @MainActor
     internal static func resetInstanceForTesting() {
         shared?.updatesTask?.cancel()
         shared?.updatesTask = nil
@@ -198,7 +203,7 @@ public final class TNConsumableManager: ObservableObject {
 
         // 1. Credit anything left unfinished by a previous run: a crash or a dropped
         //    connection between the payment and the grant must not cost the user coins.
-        Task { [weak self] in
+        Task { @MainActor [weak self] in
             await self?.recoverUnfinishedTransactions()
         }
 
@@ -218,17 +223,22 @@ public final class TNConsumableManager: ObservableObject {
 
     // MARK: - Transaction Recovery
 
-    private nonisolated func isProcessed(_ transactionId: UInt64) -> Bool {
+    private func isProcessed(_ transactionId: UInt64) -> Bool {
         let key = "\(transactionId)"
         let list = UserDefaults.standard.stringArray(forKey: tnProcessedTxListKey) ?? []
         if list.contains(key) { return true }
+        if UserDefaults.standard.bool(forKey: tnLegacyTxFlagPrefix + key) {
+            UserDefaults.standard.removeObject(forKey: tnLegacyTxFlagPrefix + key)
+            markProcessed(transactionId)
+            return true
+        }
         // A transaction TNSubscriptionCore 1.3.x credited under its old key is still credited.
         // (Giao dịch mà TNSubscriptionCore 1.3.x đã cộng dưới key cũ vẫn tính là đã cộng.)
         let legacy = UserDefaults.standard.stringArray(forKey: tnLegacyCoreProcessedTxListKey) ?? []
         return legacy.contains(key)
     }
 
-    private nonisolated func markProcessed(_ transactionId: UInt64) {
+    private func markProcessed(_ transactionId: UInt64) {
         let key = "\(transactionId)"
         var list = UserDefaults.standard.stringArray(forKey: tnProcessedTxListKey) ?? []
         guard !list.contains(key) else { return }
@@ -241,6 +251,7 @@ public final class TNConsumableManager: ObservableObject {
         UserDefaults.standard.set(list, forKey: tnProcessedTxListKey)
     }
 
+    @MainActor
     private func recoverUnfinishedTransactions() async {
         for await result in StoreKit.Transaction.unfinished {
             guard case .verified(let transaction) = result else { continue }
@@ -256,6 +267,7 @@ public final class TNConsumableManager: ObservableObject {
     /// credit is persisted would lose the purchase if the app died in between.
     /// (Thứ tự rất quan trọng: cộng tiền trước, ghi dấu sau, hoàn tất cuối cùng. Nếu hoàn tất
     /// trước khi số dư được lưu, giao dịch sẽ mất nếu app tắt giữa hai bước.)
+    @MainActor
     private func process(_ transaction: StoreKit.Transaction) async {
         guard let product = products.first(where: { $0.id == transaction.productID }) else {
             TNLog.verbose("[Consumable] Ignoring \(transaction.productID): not a configured consumable.")
@@ -287,11 +299,12 @@ public final class TNConsumableManager: ObservableObject {
     /// Fire-and-forget variant of `loadProductsAsync()`.
     /// (Phiên bản "gọi rồi quên" của `loadProductsAsync()`.)
     public func loadProducts() {
-        Task { await loadProductsAsync() }
+        Task { @MainActor in await loadProductsAsync() }
     }
 
     /// Fetches the configured consumables from the App Store.
     /// (Lấy các consumable đã cấu hình từ App Store.)
+    @MainActor
     public func loadProductsAsync() async {
         isLoadingProducts = true
         loadError = nil
@@ -333,6 +346,7 @@ public final class TNConsumableManager: ObservableObject {
 
     /// Buys a consumable by product ID and returns the reward credited.
     /// (Mua một consumable theo product ID và trả về số lượng đã cộng.)
+    @MainActor
     @discardableResult
     public func purchaseAsync(productId: String) async throws -> Int {
         guard let consumable = products.first(where: { $0.id == productId }) else {
@@ -388,6 +402,7 @@ public final class TNConsumableManager: ObservableObject {
 
     /// Buys a consumable by StoreKit `Product`.
     /// (Mua một consumable bằng `Product` của StoreKit.)
+    @MainActor
     @discardableResult
     public func purchaseAsync(product: Product) async throws -> Int {
         try await purchaseAsync(productId: product.id)
@@ -428,6 +443,7 @@ public final class TNConsumableManager: ObservableObject {
 
     /// Credits a positive amount and persists it.
     /// (Cộng một số lượng dương và lưu lại.)
+    @MainActor
     public func addBalance(_ amount: Int, for currency: String) {
         guard amount > 0 else { return }
         let current = balances[currency] ?? 0
@@ -444,6 +460,7 @@ public final class TNConsumableManager: ObservableObject {
     /// balance is insufficient — nothing is deducted in that case.
     /// (Trừ một số lượng dương. Trả về `false` khi số lượng không hợp lệ hoặc không đủ số dư —
     /// khi đó không trừ gì cả.)
+    @MainActor
     @discardableResult
     public func deductBalance(_ amount: Int, for currency: String) -> Bool {
         guard amount > 0 else { return false }
@@ -458,6 +475,7 @@ public final class TNConsumableManager: ObservableObject {
 
     /// Overwrites a balance — use when syncing from your own server.
     /// (Ghi đè số dư — dùng khi đồng bộ từ server của bạn.)
+    @MainActor
     public func setBalance(_ amount: Int, for currency: String) {
         let clamped = max(0, amount)
         balances[currency] = clamped
@@ -487,6 +505,7 @@ public final class TNConsumableManager: ObservableObject {
     /// (Hãy gắn handler này khi số dư cần là chuẩn — thứ có thể giao dịch, thứ ảnh hưởng người
     /// khác, thứ đáng để gian lận. Nếu không gắn, `spendAsync` dùng sổ cục bộ: tiện, nhưng tin
     /// vào thiết bị.)
+    @MainActor
     public func configureSpendHandler(_ handler: @escaping SpendHandler) {
         spendHandler = handler
         TNLog.info("[Consumable] A server-authoritative spend handler was installed.")
@@ -499,6 +518,7 @@ public final class TNConsumableManager: ObservableObject {
     ///   (Khoá idempotency hoặc ID vật phẩm để server của bạn chống trùng.)
     /// - Returns: `true` when the spend was committed.
     ///   (`true` khi đã trừ thành công.)
+    @MainActor
     @discardableResult
     public func spendAsync(_ amount: Int, currency: String, reference: String? = nil) async throws -> Bool {
         guard amount > 0 else { return false }

@@ -51,16 +51,6 @@ let package = Package(
         .target(
             name: "TNSubscriptionShared"
         ),
-        // Code that is the same in every engine that runs StoreKit 2 itself (Core, Adapty,
-        // Qonversion): logging, identity, consumables, the warm-start cache, Apple sheets, price
-        // maths and the built-in paywall. Not a product, and not used by the RevenueCat engine,
-        // which keeps its own versions for backward compatibility.
-        // (Phần giống hệt nhau ở mọi engine tự chạy StoreKit 2 — Core, Adapty, Qonversion. Không
-        // phải product, và engine RevenueCat không dùng vì giữ bản riêng để tương thích ngược.)
-        .target(
-            name: "TNSubscriptionKit",
-            dependencies: ["TNSubscriptionShared"]
-        ),
         .target(
             name: "TNSubscriptionIOS",
             dependencies: [
@@ -74,7 +64,7 @@ let package = Package(
         // NOTE: only the shared module — this target must never link a vendor SDK.
         .target(
             name: "TNSubscriptionCore",
-            dependencies: ["TNSubscriptionKit"],
+            dependencies: ["TNSubscriptionShared"],
             resources: [
                 .process("PrivacyInfo.xcprivacy")
             ]
@@ -84,7 +74,7 @@ let package = Package(
         .target(
             name: "TNSubscriptionAdapty",
             dependencies: [
-                "TNSubscriptionKit",
+                "TNSubscriptionShared",
                 .product(name: "Adapty", package: "AdaptySDK-iOS"),
             ],
             resources: [
@@ -97,7 +87,7 @@ let package = Package(
         .target(
             name: "TNSubscriptionQonversion",
             dependencies: [
-                "TNSubscriptionKit",
+                "TNSubscriptionShared",
                 .product(name: "QonversionNoIdfa", package: "qonversion-ios-sdk"),
             ],
             resources: [
@@ -127,10 +117,6 @@ let package = Package(
         .testTarget(
             name: "TNSubscriptionSharedTests",
             dependencies: ["TNSubscriptionShared"]
-        ),
-        .testTarget(
-            name: "TNSubscriptionKitTests",
-            dependencies: ["TNSubscriptionKit"]
         ),
     ]
 )

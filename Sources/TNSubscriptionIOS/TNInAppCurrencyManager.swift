@@ -105,12 +105,12 @@ public final class TNInAppCurrencyManager: ObservableObject {
     
     private static func loadLocalOffset(for code: String) -> Int {
         let key = localOffsetKeyPrefix + code
-        if let keychainStr = TNSubscriptionIOS.loadFromKeychain(account: key), let val = Int(keychainStr) {
+        if let keychainStr = TNIdentity.loadFromKeychain(account: key), let val = Int(keychainStr) {
             return val
         }
         if UserDefaults.standard.object(forKey: key) != nil {
             let saved = UserDefaults.standard.integer(forKey: key)
-            TNSubscriptionIOS.saveToKeychain(account: key, value: "\(saved)")
+            TNIdentity.saveToKeychain(account: key, value: "\(saved)")
             return saved
         }
         return 0
@@ -119,7 +119,7 @@ public final class TNInAppCurrencyManager: ObservableObject {
     private static func saveLocalOffset(_ offset: Int, for code: String) {
         let key = localOffsetKeyPrefix + code
         UserDefaults.standard.set(offset, forKey: key)
-        TNSubscriptionIOS.saveToKeychain(account: key, value: "\(offset)")
+        TNIdentity.saveToKeychain(account: key, value: "\(offset)")
     }
     
     private func serverBalance(for code: String) -> Int {

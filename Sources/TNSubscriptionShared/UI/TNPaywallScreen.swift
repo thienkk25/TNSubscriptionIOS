@@ -7,9 +7,9 @@ import StoreKit
 /// (Paywall có sẵn, viết một lần cho mọi engine tuân theo `TNPaywallEngine`.)
 ///
 /// Apps never see this type: each engine exposes it as its own public `TNDefaultPaywallView`,
-/// which is a one-line wrapper. A fix here reaches Core, Adapty and Qonversion at once.
+/// which is a one-line wrapper. A fix here reaches all four engines at once.
 /// (App không bao giờ thấy kiểu này: mỗi engine expose nó qua `TNDefaultPaywallView` public của
-/// riêng mình — chỉ là lớp bọc một dòng. Sửa ở đây là Core, Adapty và Qonversion cùng được sửa.)
+/// riêng mình — chỉ là lớp bọc một dòng. Sửa ở đây là cả bốn engine cùng được sửa.)
 package struct TNPaywallScreen<Engine: TNPaywallEngine>: View {
 
     @ObservedObject private var manager: Engine
@@ -432,7 +432,7 @@ package struct TNPaywallScreen<Engine: TNPaywallEngine>: View {
                 .background(config.cardColor)
                 .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
             } else {
-                ForEach(displayedPackages) { package in
+                ForEach(displayedPackages, id: \.identifier) { package in
                     planCard(for: package)
                 }
             }
@@ -497,8 +497,8 @@ package struct TNPaywallScreen<Engine: TNPaywallEngine>: View {
                         .font(.title3.weight(.bold))
                         .foregroundStyle(config.accentColor)
                     if config.showPricePerMonth,
-                       package.packageType != .monthly,
-                       package.packageType != .lifetime,
+                       package.paywallPackageType != .monthly,
+                       package.paywallPackageType != .lifetime,
                        let perMonth = package.localizedPricePerMonth {
                         Text(String(format: NSLocalizedString("%@ / mo", comment: ""), perMonth))
                             .font(.caption2)
@@ -520,7 +520,7 @@ package struct TNPaywallScreen<Engine: TNPaywallEngine>: View {
         .buttonStyle(.plain)
         // Re-buying the plan you already have would be a no-op charge, so block it —
         // except for lifetime, which is the legitimate upgrade out of a subscription.
-        .disabled(isCurrent && isTargetUnlocked && package.packageType != .lifetime)
+        .disabled(isCurrent && isTargetUnlocked && package.paywallPackageType != .lifetime)
     }
 
     private func badge(_ text: String, fg: Color, bg: Color) -> some View {
@@ -538,7 +538,7 @@ package struct TNPaywallScreen<Engine: TNPaywallEngine>: View {
     /// (Tên gói: chữ thay thế trong `texts` nếu có, nếu không thì tên có sẵn. Gói có kỳ hạn không chuẩn
     /// thì dùng tên sản phẩm của store.)
     private func planTitle(for package: Engine.Package) -> String {
-        switch package.packageType {
+        switch package.paywallPackageType {
         case .weekly: return config.text(.weekly)
         case .monthly: return config.text(.monthly)
         case .twoMonth: return config.text(.twoMonths)
@@ -551,7 +551,7 @@ package struct TNPaywallScreen<Engine: TNPaywallEngine>: View {
     }
 
     private func planSubtitle(for package: Engine.Package) -> String {
-        if package.packageType == .lifetime {
+        if package.paywallPackageType == .lifetime {
             return config.text(.lifetimeSubtitle)
         }
         if let summary = manager.paywallOffer(for: package)?.localizedSummary {
@@ -689,12 +689,12 @@ package struct TNPaywallScreen<Engine: TNPaywallEngine>: View {
                     activeAlert = .purchaseSuccess
                 }
             case .failure(let error):
-                switch (error as? any TNPaywallPurchaseError)?.paywallOutcome {
+                switch manager.paywallOutcome(for: error) {
                 case .cancelled:
                     return  // the user's own choice is not an error worth an alert
                 case .pending:
                     activeAlert = .purchasePending
-                case .failed, nil:
+                case .failed:
                     activeAlert = .purchaseFailed(error.localizedDescription)
                 }
             }

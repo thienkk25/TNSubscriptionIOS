@@ -1,7 +1,7 @@
 import Foundation
 import Adapty
 
-// `TNIntroEligibilityStatus` lives in TNSubscriptionKit. (`TNIntroEligibilityStatus` nằm trong TNSubscriptionKit.)
+// `TNIntroEligibilityStatus` lives in TNSubscriptionShared. (`TNIntroEligibilityStatus` nằm trong TNSubscriptionShared.)
 
 // MARK: - TNOfferPaymentMode
 
@@ -98,12 +98,11 @@ public struct TNSubscriptionOffer: Identifiable, Hashable, Sendable {
             unit: period.unit,
             count: period.numberOfUnits * max(1, adaptyOffer.numberOfPeriods)
         )
-        switch paymentMode {
-        case .freeTrial:
-            return String(format: NSLocalizedString("%@ Free Trial", comment: ""), periodText)
-        case .payAsYouGo, .payUpFront, .unknown:
-            return String(format: NSLocalizedString("%@ for %@", comment: ""), localizedPriceString, periodText)
-        }
+        return TNOfferRules.summary(
+            isFreeTrial: paymentMode == .freeTrial,
+            localizedPrice: localizedPriceString,
+            periodText: periodText
+        )
     }
 
     init(adaptyOffer: AdaptySubscriptionOffer, productIdentifier: String) {

@@ -13,27 +13,48 @@ import os
 /// (Thông điệp được truyền dạng autoclosure, nên chuỗi nội suy không bao giờ bị tính toán nếu mức
 /// log hiện tại đã lọc bỏ nó.)
 ///
-/// An engine with a vendor SDK forwards the level to that SDK itself, in its own `logLevel` setter
-/// (see `TNAdaptyLog.swift`); nothing vendor-specific lives here.
-/// (Engine có SDK nhà cung cấp tự chuyển mức log sang SDK đó trong setter `logLevel` của mình — xem
-/// `TNAdaptyLog.swift`; ở đây không có gì riêng của nhà cung cấp.)
+/// Every engine uses this one logger, the RevenueCat engine included. An engine with a vendor SDK
+/// forwards the level to that SDK itself (see `TNAdaptyLog.swift`, `TNSubscriptionIOS/TNLog.swift`);
+/// nothing vendor-specific lives here.
+/// (Mọi engine dùng chung logger này, kể cả engine RevenueCat. Engine có SDK nhà cung cấp tự chuyển
+/// mức log sang SDK đó — xem `TNAdaptyLog.swift`, `TNSubscriptionIOS/TNLog.swift`; ở đây không có gì
+/// riêng của nhà cung cấp.)
 package enum TNLog {
 
     private static let lock = NSLock()
     private static var _level: TNLogLevel = .default
     private static var _handler: ((TNLogLevel, String) -> Void)?
-    private static var _logger = makeLogger(category: "TNSubscription")
+    private static var _output = Output.unifiedLog(makeLogger(category: "TNSubscription"))
+
+    /// Where messages go when the app installed no handler. (Log đi đâu khi app không gắn handler.)
+    private enum Output {
+        /// `os.Logger`, under the engine's category in Console.app. (`os.Logger`, theo category của engine.)
+        case unifiedLog(Logger)
+        /// `print`, with a prefix — what the RevenueCat engine has always done.
+        /// (`print` kèm tiền tố — cách engine RevenueCat vẫn làm từ trước.)
+        case console(prefix: String)
+    }
 
     private static func makeLogger(category: String) -> Logger {
         Logger(subsystem: Bundle.main.bundleIdentifier ?? "com.tnsubscription", category: category)
     }
 
-    /// Names the engine in Console.app. Called once by each engine's `configure`.
-    /// (Đặt tên engine hiển thị trong Console.app. Mỗi engine gọi một lần trong `configure`.)
+    /// Sends output to the unified log under `category`. Called by each engine's `configure`.
+    /// (Gửi log vào unified log với `category`. Mỗi engine gọi trong `configure`.)
     package static func setCategory(_ category: String) {
         let logger = makeLogger(category: category)
         lock.lock()
-        _logger = logger
+        _output = .unifiedLog(logger)
+        lock.unlock()
+    }
+
+    /// Sends output to `print` as `[prefix][LEVEL] message`. Used by the RevenueCat engine so its
+    /// output stays exactly as it was.
+    /// (Gửi log ra `print` dạng `[prefix][LEVEL] message`. Engine RevenueCat dùng để output giữ
+    /// nguyên như cũ.)
+    package static func setConsolePrefix(_ prefix: String) {
+        lock.lock()
+        _output = .console(prefix: prefix)
         lock.unlock()
     }
 
@@ -71,7 +92,7 @@ package enum TNLog {
         lock.lock()
         let threshold = _level
         let sink = _handler
-        let logger = _logger
+        let output = _output
         lock.unlock()
 
         guard threshold != .none, level >= threshold else { return }
@@ -80,7 +101,12 @@ package enum TNLog {
         if let sink {
             sink(level, text)
         } else {
-            logger.log(level: level.osLogType, "[\(level.description, privacy: .public)] \(text, privacy: .public)")
+            switch output {
+            case .unifiedLog(let logger):
+                logger.log(level: level.osLogType, "[\(level.description, privacy: .public)] \(text, privacy: .public)")
+            case .console(let prefix):
+                print("[\(prefix)][\(level)] \(text)")
+            }
         }
     }
 

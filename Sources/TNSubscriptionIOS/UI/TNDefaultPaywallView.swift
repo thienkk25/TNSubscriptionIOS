@@ -1,645 +1,110 @@
 import SwiftUI
-import StoreKit
 import RevenueCat
 
-// MARK: - Default Paywall View
+// MARK: - TNDefaultPaywallView
 
-/// The built-in paywall view provided by TNSubscriptionIOS.
-/// Fully configurable via `DefaultPaywallConfig`.
+/// The built-in paywall, driven entirely by `TNSubscriptionIOS` and `DefaultPaywallConfig`.
+/// (Paywall có sẵn, điều khiển hoàn toàn bởi `TNSubscriptionIOS` và `DefaultPaywallConfig`.)
 ///
-/// Host apps can use this directly in SwiftUI (`.sheet { TNDefaultPaywallView(config: ...) }`)
-/// or present from UIKit via `TNSubscriptionIOS.presentDefaultPaywall(from:config:)`.
+/// Use it directly in SwiftUI (`.sheet { TNDefaultPaywallView(config: …) }`), or present it
+/// from UIKit with `TNSubscriptionIOS.presentDefaultPaywall(from:config:)`.
+/// (Dùng trực tiếp trong SwiftUI (`.sheet { TNDefaultPaywallView(config: …) }`), hoặc hiển thị
+/// từ UIKit bằng `TNSubscriptionIOS.presentDefaultPaywall(from:config:)`.)
+///
+/// The screen itself is `TNPaywallScreen` in TNSubscriptionShared, shared with every engine; this
+/// engine only supplies RevenueCat's data, below.
+/// (Màn hình thật là `TNPaywallScreen` trong TNSubscriptionShared, dùng chung với mọi engine; engine
+/// này chỉ cung cấp dữ liệu RevenueCat, ở bên dưới.)
 public struct TNDefaultPaywallView: View {
-    @ObservedObject private var manager = TNSubscriptionIOS.shared
-    @Environment(\.dismiss) private var dismiss
-    
-    @State private var selectedPackage: Package?
-    @State private var activeAlert: UpgradeAlert?
-    @State private var isRestoring = false
-    @State private var isRedeemingOfferCode = false
-    
+
     public let config: DefaultPaywallConfig
-    
+
     public init(config: DefaultPaywallConfig = DefaultPaywallConfig()) {
         self.config = config
     }
-    
-    private var isTargetUnlocked: Bool {
-        if let targetId = config.entitlementId, !targetId.isEmpty {
-            return manager.hasEntitlement(targetId)
-        }
-        return manager.entitlementState == .unlocked || manager.isPremium
-    }
-    
-    private var displayedPackages: [Package] {
-        guard let targetId = config.entitlementId, !targetId.isEmpty else {
-            return manager.availablePackages
-        }
-        let configuredProducts = manager.productIDs(for: targetId)
-        guard !configuredProducts.isEmpty, config.offeringIdentifier == nil else {
-            return manager.availablePackages
-        }
-        let filtered = manager.availablePackages.filter {
-            configuredProducts.contains($0.storeProduct.productIdentifier)
-        }
-        return filtered.isEmpty ? manager.availablePackages : filtered
-    }
-    
-    /// The reference plan for "save X%": the most expensive per month on display.
-    /// (Gói tham chiếu cho "tiết kiệm X%": gói đắt nhất tính theo tháng đang hiển thị.)
-    private var savingsBaseline: Package? {
-        displayedPackages
-            .filter { $0.storeProduct.pricePerMonth != nil }
-            .max { ($0.storeProduct.pricePerMonth?.doubleValue ?? 0) < ($1.storeProduct.pricePerMonth?.doubleValue ?? 0) }
-    }
 
-    /// The same savings maths as the other engines, in `Double` so a `Decimal` overflow can
-    /// never surface as "SAVE 0%".
-    /// (Cùng cách tính tiết kiệm như các engine khác, bằng `Double` để tràn `Decimal` không bao giờ
-    /// hiện thành "SAVE 0%".)
-    private func savingsPercentage(_ package: Package, comparedTo baseline: Package) -> Int? {
-        guard let mine = package.storeProduct.pricePerMonth?.doubleValue,
-              let theirs = baseline.storeProduct.pricePerMonth?.doubleValue,
-              theirs > 0, mine.isFinite, theirs.isFinite, mine < theirs else { return nil }
-        let percentage = (theirs - mine) / theirs * 100
-        return percentage.isFinite ? Int(percentage.rounded(.down)) : nil
-    }
-
-    private enum UpgradeAlert: Identifiable {
-        case purchaseSuccess
-        case purchaseFailed(String)
-        case restoreSuccess
-        case restoreFailed
-        case noSubscription
-        
-        var id: String {
-            switch self {
-            case .purchaseSuccess: return "purchaseSuccess"
-            case .purchaseFailed(let msg): return "purchaseFailed-\(msg)"
-            case .restoreSuccess: return "restoreSuccess"
-            case .restoreFailed: return "restoreFailed"
-            case .noSubscription: return "noSubscription"
-            }
-        }
-    }
-    
     public var body: some View {
-        NavigationStack {
-            ZStack {
-                config.backgroundColor.ignoresSafeArea()
-                
-                ScrollView(showsIndicators: false) {
-                    VStack(spacing: 24) {
-                        headerSection
-                        
-                        if manager.entitlementState == .unknown {
-                            verifyingSection
-                        } else if isTargetUnlocked {
-                            activePlanSection
-                        } else {
-                            featuresSection
-                            plansSection
-                            purchaseButton
-                        }
-                        
-                        footerActions
-                    }
-                    .padding(.horizontal, 20)
-                    .padding(.bottom, 32)
-                }
-            }
-            .navigationTitle(config.text(.navigationTitle))
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    closeButton
-                }
-            }
-            .toolbarBackground(config.backgroundColor, for: .navigationBar)
-            .toolbarBackground(.visible, for: .navigationBar)
-        }
-        .preferredColorScheme(config.preferredColorScheme)
-        .onAppear {
-            manager.checkSubscriptionStatus()
-            manager.fetchOfferings(offeringIdentifier: config.offeringIdentifier)
-            if selectedPackage == nil {
-                selectedPackage = displayedPackages.first(where: TNSubscriptionIOS.isRecommendedPackage)
-                    ?? displayedPackages.first
-            }
-        }
-        .onChange(of: displayedPackages.map(\.identifier)) { _ in
-            guard selectedPackage == nil, !displayedPackages.isEmpty else { return }
-            selectedPackage = displayedPackages.first(where: TNSubscriptionIOS.isRecommendedPackage)
-                ?? displayedPackages.first
-        }
-        .offerCodeRedemption(isPresented: $isRedeemingOfferCode) { result in
-            if case .success = result {
-                Task { @MainActor in
-                    await manager.resolveEntitlement()
-                    if isTargetUnlocked || manager.isPremium {
-                        activeAlert = .purchaseSuccess
-                    }
-                }
-            }
-        }
-        .alert(item: $activeAlert) { alert in
-            switch alert {
-            case .purchaseSuccess:
-                return Alert(
-                    title: Text(config.text(.purchaseSuccessTitle)),
-                    message: Text(config.text(.purchaseSuccessMessage)),
-                    dismissButton: .default(Text(config.text(.ok))) { dismiss() }
-                )
-            case .purchaseFailed(let message):
-                return Alert(
-                    title: Text(config.text(.purchaseFailedTitle)),
-                    message: Text(message),
-                    dismissButton: .default(Text(config.text(.ok)))
-                )
-            case .restoreSuccess:
-                return Alert(
-                    title: Text(config.text(.restoreSuccessTitle)),
-                    message: Text(config.text(.restoreSuccessMessage)),
-                    dismissButton: .default(Text(config.text(.ok)))
-                )
-            case .restoreFailed:
-                return Alert(
-                    title: Text(config.text(.restoreFailedTitle)),
-                    message: Text(config.text(.restoreFailedMessage)),
-                    dismissButton: .default(Text(config.text(.ok)))
-                )
-            case .noSubscription:
-                return Alert(
-                    title: Text(config.text(.noSubscriptionTitle)),
-                    message: Text(config.text(.noSubscriptionMessage)),
-                    dismissButton: .default(Text(config.text(.ok)))
-                )
-            }
-        }
+        TNPaywallScreen(engine: TNSubscriptionIOS.shared, config: config)
     }
-    
-    /// The toolbar's Close button. Tinted only when `closeButtonTint` is set, so by default it is
-    /// the plain system control (the standard Liquid Glass capsule on iOS 26).
-    /// (Nút Close trên toolbar. Chỉ tô màu khi có `closeButtonTint`, nên mặc định nó là control
-    /// chuẩn của hệ thống — viên nang Liquid Glass trên iOS 26.)
-    @ViewBuilder
-    private var closeButton: some View {
-        let button = Button(config.text(.close)) { dismiss() }
-        if let tint = config.closeButtonTint {
-            button.foregroundStyle(tint)
-        } else {
-            button
-        }
+}
+
+// MARK: - Paywall Data
+
+extension TNSubscriptionIOS: TNPaywallEngine {
+
+    /// The introductory offer, and only while the user is still eligible for it.
+    /// (Ưu đãi người mới, và chỉ khi người dùng còn đủ điều kiện.)
+    package func paywallOffer(for package: Package) -> StoreProductDiscount? {
+        introOffer(for: package)
     }
 
-    // MARK: - Sections
-    
-    private var headerSection: some View {
-        VStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .fill(config.premiumGradient.opacity(0.25))
-                    .frame(width: 88, height: 88)
-                Image(systemName: "crown.fill")
-                    .font(.system(size: 40))
-                    .foregroundStyle(config.premiumGradient)
+    /// RevenueCat reports cancellation and Ask to Buy through its own error codes.
+    /// (RevenueCat báo huỷ và Ask to Buy bằng mã lỗi riêng.)
+    package func paywallOutcome(for error: Error) -> TNPaywallPurchaseOutcome {
+        if let flowError = error as? PurchaseFlowError, case .userCancelled = flowError {
+            return .cancelled
+        }
+        if let code = error as? RevenueCat.ErrorCode {
+            switch code {
+            case .purchaseCancelledError: return .cancelled
+            case .paymentPendingError: return .pending
+            default: return .failed
             }
-            .padding(.top, 8)
-            
-            Text(config.appName)
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(config.textSecondaryColor)
-                .textCase(.uppercase)
-                .tracking(1.2)
-            
-            Text(headerTitle)
-                .font(.title2)
-                .fontWeight(.black)
-                .foregroundStyle(config.textPrimaryColor)
-                .multilineTextAlignment(.center)
-            
-            Text(headerSubtitle)
-                .font(.subheadline)
-                .foregroundStyle(config.textSecondaryColor)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 8)
+        }
+        return .failed
+    }
+}
+
+extension TNPackageType {
+    /// RevenueCat's package type, as the shared one. (Loại gói của RevenueCat, quy về loại dùng chung.)
+    init(revenueCat type: PackageType) {
+        switch type {
+        case .lifetime: self = .lifetime
+        case .annual: self = .annual
+        case .sixMonth: self = .sixMonth
+        case .threeMonth: self = .threeMonth
+        case .twoMonth: self = .twoMonth
+        case .monthly: self = .monthly
+        case .weekly: self = .weekly
+        case .custom: self = .custom
+        default: self = .unknown
         }
     }
-    
-    /// The app's own copy from `DefaultPaywallConfig` when set, otherwise the generic default.
-    /// (Câu của chính app trong `DefaultPaywallConfig` nếu có, nếu không thì dùng câu mặc định.)
-    private var headerTitle: String {
-        isTargetUnlocked
-            ? (config.unlockedHeaderTitle ?? NSLocalizedString("You're Premium", comment: ""))
-            : (config.headerTitle ?? NSLocalizedString("Upgrade to Premium", comment: ""))
+}
+
+extension Package: TNPaywallPackage {
+    package var paywallPackageType: TNPackageType { TNPackageType(revenueCat: packageType) }
+    package var productIdentifier: String { storeProduct.productIdentifier }
+    package var localizedTitle: String { storeProduct.localizedTitle }
+    package var pricePerMonth: Decimal? { storeProduct.pricePerMonth?.decimalValue }
+    package var localizedPricePerMonth: String? { storeProduct.localizedPricePerMonth }
+
+    package func savingsPercentage(comparedTo other: Package) -> Int? {
+        guard let mine = pricePerMonth, let theirs = other.pricePerMonth else { return nil }
+        return TNPriceMath.savingsPercentage(perMonth: mine, comparedTo: theirs)
+    }
+}
+
+extension EntitlementInfo: TNPaywallEntitlement {
+    /// RevenueCat keeps access during a grace period, so a billing issue on an active entitlement
+    /// is a grace period; on an inactive one it is a billing retry.
+    /// (RevenueCat giữ quyền trong grace period, nên lỗi thanh toán trên quyền lợi còn hoạt động là
+    /// grace period; trên quyền lợi đã hết là billing retry.)
+    package var isInGracePeriod: Bool { billingIssueDetectedAt != nil && isActive }
+    package var hasBillingIssue: Bool { billingIssueDetectedAt != nil && !isActive }
+}
+
+extension StoreProductDiscount: TNPaywallOffer {
+    package var paywallKind: TNPaywallOfferKind {
+        guard type == .introductory else { return .other }
+        return paymentMode == .freeTrial ? .freeTrial : .introductory
     }
 
-    private var headerSubtitle: String {
-        isTargetUnlocked
-            ? (config.unlockedHeaderSubtitle ?? NSLocalizedString("Thank you for supporting the app. Manage or change your plan below.", comment: ""))
-            : (config.headerSubtitle ?? NSLocalizedString("Unlock all premium features, custom designs, and settings.", comment: ""))
-    }
-    
-    private var verifyingSection: some View {
-        VStack(spacing: 16) {
-            ProgressView()
-                .tint(config.accentColor)
-                .scaleEffect(1.3)
-            Text(config.text(.verifying))
-                .foregroundStyle(config.textSecondaryColor)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 40)
-    }
-    
-    private var activePlanSection: some View {
-        VStack(spacing: 16) {
-            HStack {
-                Image(systemName: "checkmark.seal.fill")
-                    .foregroundStyle(config.secondaryColor)
-                Text(config.text(.premiumActive))
-                    .font(.headline)
-                    .foregroundStyle(config.textPrimaryColor)
-                Spacer()
-            }
-            .padding()
-            .background(config.cardColor)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(config.secondaryColor.opacity(0.4), lineWidth: 1)
-            )
-            
-            if let planName = manager.currentPlanDisplayName {
-                Text(String(format: NSLocalizedString("Current plan: %@", comment: ""), planName))
-                    .font(.subheadline)
-                    .foregroundStyle(config.textSecondaryColor)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            
-            featuresSection
-            
-            Text(config.text(.switchPlanHint))
-                .font(.caption)
-                .foregroundStyle(config.textMutedColor)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            
-            plansSection
-            purchaseButton
-            
-            Button {
-                openSubscriptionManagement()
-            } label: {
-                Text(config.text(.manageSubscription))
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(config.accentColor)
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(config.cardColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            }
-        }
-    }
-    
-    private var featuresSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(config.text(.whatsIncluded))
-                .font(.headline)
-                .foregroundStyle(config.textPrimaryColor)
-            
-            VStack(spacing: 10) {
-                ForEach(config.features) { feature in
-                    HStack(alignment: .top, spacing: 14) {
-                        Image(systemName: feature.icon)
-                            .font(.body)
-                            .foregroundStyle(config.accentColor)
-                            .frame(width: 28)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(feature.title)
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(config.textPrimaryColor)
-                            Text(feature.subtitle)
-                                .font(.caption)
-                                .foregroundStyle(config.textSecondaryColor)
-                        }
-                        Spacer()
-                    }
-                    .padding(12)
-                    .background(config.cardColor)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-                }
-            }
-        }
-    }
-    
-    @ViewBuilder
-    private var plansSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(config.text(.choosePlan))
-                .font(.headline)
-                .foregroundStyle(config.textPrimaryColor)
-            
-            if manager.isLoadingOfferings {
-                HStack {
-                    Spacer()
-                    ProgressView().tint(config.accentColor)
-                    Spacer()
-                }
-                .padding(.vertical, 24)
-            } else if displayedPackages.isEmpty {
-                VStack(spacing: 12) {
-                    Text(manager.offeringsError ?? config.text(.plansUnavailable))
-                        .font(.caption)
-                        .foregroundStyle(config.textSecondaryColor)
-                        .multilineTextAlignment(.center)
-                    Button(config.text(.retry)) {
-                        manager.fetchOfferings(offeringIdentifier: config.offeringIdentifier)
-                    }
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(config.accentColor)
-                }
-                .frame(maxWidth: .infinity)
-                .padding()
-                .background(config.cardColor)
-                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            } else {
-                ForEach(displayedPackages, id: \.identifier) { package in
-                    planCard(for: package)
-                }
-            }
-        }
-    }
-    
-    private func planCard(for package: Package) -> some View {
-        let isSelected = selectedPackage?.identifier == package.identifier
-        let isCurrent = manager.currentPlanProductID == package.storeProduct.productIdentifier
-        let isRecommended = TNSubscriptionIOS.isRecommendedPackage(package)
-        let eligibleIntro = manager.introOffer(for: package)
-        let savings = config.showSavingsBadge
-            ? savingsBaseline.flatMap { savingsPercentage(package, comparedTo: $0) }
-            : nil
-        
-        return Button {
-            selectedPackage = package
-        } label: {
-            HStack(spacing: 14) {
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack(spacing: 8) {
-                        Text(planTitle(for: package))
-                            .font(.headline)
-                            .foregroundStyle(config.textPrimaryColor)
-                        if isRecommended {
-                            Text(config.text(.bestValue))
-                                .font(.system(size: 9, weight: .black))
-                                .foregroundStyle(.black)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(config.accentColor)
-                                .clipShape(Capsule())
-                        }
-                        if let savings, savings > 0 {
-                            Text(String(format: NSLocalizedString("SAVE %d%%", comment: ""), savings))
-                                .font(.system(size: 9, weight: .black))
-                                .foregroundStyle(config.secondaryColor)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(config.secondaryColor.opacity(0.15))
-                                .clipShape(Capsule())
-                        }
-                        if let intro = eligibleIntro {
-                            Text(intro.paymentMode == .freeTrial
-                                 ? config.text(.freeTrial)
-                                 : config.text(.introOffer))
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(config.accentColor)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(config.accentColor.opacity(0.18))
-                                .clipShape(Capsule())
-                        }
-                        if isCurrent {
-                            Text(config.text(.current))
-                                .font(.system(size: 9, weight: .bold))
-                                .foregroundStyle(config.secondaryColor)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 4)
-                                .background(config.secondaryColor.opacity(0.15))
-                                .clipShape(Capsule())
-                        }
-                    }
-                    Text(planSubtitle(for: package))
-                        .font(.caption)
-                        .foregroundStyle(eligibleIntro != nil ? config.accentColor : config.textSecondaryColor)
-                }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text(package.storeProduct.localizedPriceString)
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(config.accentColor)
-                    if config.showPricePerMonth,
-                       package.packageType != .monthly,
-                       package.packageType != .lifetime,
-                       let perMonth = package.storeProduct.localizedPricePerMonth {
-                        Text(String(format: NSLocalizedString("%@ / mo", comment: ""), perMonth))
-                            .font(.caption2)
-                            .foregroundStyle(config.textMutedColor)
-                    }
-                }
-            }
-            .padding(16)
-            .background(isSelected ? config.cardLightColor : config.cardColor)
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(
-                        isSelected ? config.accentColor : config.textMutedColor.opacity(0.2),
-                        lineWidth: isSelected ? 2 : 1
-                    )
-            )
-        }
-        .buttonStyle(.plain)
-        .disabled(isCurrent && isTargetUnlocked && package.packageType != .lifetime)
-    }
-    
-    private var purchaseButton: some View {
-        Group {
-            if !displayedPackages.isEmpty || isTargetUnlocked {
-                Button(action: purchaseSelectedPlan) {
-                    Group {
-                        if manager.isPurchasing {
-                            ProgressView()
-                                .tint(.black)
-                        } else {
-                            Text(purchaseButtonTitle)
-                                .font(.headline.weight(.black))
-                        }
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 16)
-                    .foregroundStyle(.black)
-                    .background(config.premiumGradient)
-                    .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
-                }
-                .disabled(selectedPackage == nil || manager.isPurchasing)
-                .opacity(selectedPackage == nil ? 0.5 : 1)
-            }
-        }
-    }
-    
-    private var purchaseButtonTitle: String {
-        if isTargetUnlocked {
-            return config.text(.switchPlan)
-        }
-        if let selected = selectedPackage, let intro = manager.introOffer(for: selected) {
-            if intro.paymentMode == .freeTrial {
-                return config.text(.startFreeTrial)
-            } else {
-                return config.text(.claimIntroOffer)
-            }
-        }
-        return config.text(.continueButton)
-    }
-    
-    @ViewBuilder
-    private var legalLinksRow: some View {
-        HStack(spacing: 20) {
-            if let privacyURL = config.privacyURL {
-                Link(config.text(.privacyPolicy), destination: privacyURL)
-            }
-            if let termsURL = config.termsURL {
-                Link(config.text(.termsOfUse), destination: termsURL)
-            }
-        }
-        .font(.caption2)
-        .foregroundStyle(config.textMutedColor)
-    }
-    
-    private var footerActions: some View {
-        VStack(spacing: 12) {
-            HStack(spacing: 16) {
-                Button(action: restorePurchases) {
-                    if isRestoring {
-                        ProgressView()
-                            .tint(config.accentColor)
-                    } else {
-                        Text(config.text(.restorePurchases))
-                            .font(.subheadline)
-                            .foregroundStyle(config.accentColor)
-                    }
-                }
-                .disabled(isRestoring)
-                
-                if config.showRedeemCodeButton {
-                    Text("•")
-                        .font(.subheadline)
-                        .foregroundStyle(config.textMutedColor)
-                    
-                    Button(action: redeemOfferCode) {
-                        Text(config.text(.redeemCode))
-                            .font(.subheadline)
-                            .foregroundStyle(config.accentColor)
-                    }
-                }
-            }
-            
-            legalLinksRow
-            
-            Text(config.text(.legalDisclaimer))
-                .font(.caption2)
-                .foregroundStyle(config.textMutedColor.opacity(0.8))
-                .multilineTextAlignment(.center)
-                .padding(.top, 4)
-        }
-        .padding(.top, 8)
-    }
-    
-    // MARK: - Actions
-    
-    private func planTitle(for package: Package) -> String {
-        switch package.packageType {
-        case .weekly: return config.text(.weekly)
-        case .monthly: return config.text(.monthly)
-        case .annual: return config.text(.yearly)
-        case .lifetime: return config.text(.lifetime)
-        case .sixMonth: return config.text(.sixMonths)
-        case .threeMonth: return config.text(.threeMonths)
-        case .twoMonth: return config.text(.twoMonths)
-        case .custom, .unknown: return package.storeProduct.localizedTitle
-        @unknown default: return package.storeProduct.localizedTitle
-        }
-    }
-    
-    private func planSubtitle(for package: Package) -> String {
-        if package.packageType == .lifetime {
-            return config.text(.lifetimeSubtitle)
-        }
-        if let introSummary = manager.introOfferSummary(for: package) {
-            return String(
-                format: NSLocalizedString("%@ · Then %@", comment: ""),
-                introSummary,
-                package.storeProduct.localizedPriceString
-            )
-        }
-        return config.text(.autoRenewSubtitle)
-    }
-    
-    private func purchaseSelectedPlan() {
-        guard let package = selectedPackage else { return }
-        if manager.currentPlanProductID == package.storeProduct.productIdentifier {
-            openSubscriptionManagement()
-            return
-        }
-        
-        manager.purchase(package: package) { result in
-            switch result {
-            case .success:
-                if isTargetUnlocked || manager.isPremium {
-                    activeAlert = .purchaseSuccess
-                }
-            case .failure(let error):
-                if let flowError = error as? TNSubscriptionIOS.PurchaseFlowError,
-                   case .userCancelled = flowError {
-                    return
-                }
-                activeAlert = .purchaseFailed(error.localizedDescription)
-            }
-        }
-    }
-    
-    private func restorePurchases() {
-        isRestoring = true
-        manager.restorePurchases { result in
-            isRestoring = false
-            switch result {
-            case .success(let hasPremium):
-                activeAlert = hasPremium ? .restoreSuccess : .noSubscription
-            case .failure:
-                activeAlert = .restoreFailed
-            }
-        }
-    }
-    
-    private func redeemOfferCode() {
-        isRedeemingOfferCode = true
-    }
-    
-    private func openSubscriptionManagement() {
-        Task { @MainActor in
-            if let windowScene = UIApplication.shared.connectedScenes
-                .compactMap({ $0 as? UIWindowScene })
-                .first(where: { $0.activationState == .foregroundActive })
-                ?? UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
-                do {
-                    try await AppStore.showManageSubscriptions(in: windowScene)
-                    return
-                } catch {
-                    // Fallback to external URL if native sheet fails
-                }
-            }
-            if let url = URL(string: "https://apps.apple.com/account/subscriptions") {
-                await UIApplication.shared.open(url)
-            }
-        }
+    package var localizedSummary: String {
+        TNOfferRules.summary(
+            isFreeTrial: paymentMode == .freeTrial,
+            localizedPrice: localizedPriceString,
+            periodText: TNSubscriptionIOS.formatSubscriptionPeriod(subscriptionPeriod, numberOfPeriods: numberOfPeriods)
+        )
     }
 }

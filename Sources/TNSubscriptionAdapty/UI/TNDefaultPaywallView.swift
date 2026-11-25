@@ -10,10 +10,10 @@ import SwiftUI
 /// (Dùng trực tiếp trong SwiftUI (`.sheet { TNDefaultPaywallView(config: …) }`), hoặc hiển thị
 /// từ UIKit bằng `TNSubscriptionAdapty.presentDefaultPaywall(from:config:)`.)
 ///
-/// The screen itself is `TNPaywallScreen` in TNSubscriptionKit, shared with the other engines that
-/// run StoreKit 2 themselves; this engine only supplies the data, below.
-/// (Màn hình thật là `TNPaywallScreen` trong TNSubscriptionKit, dùng chung với các engine khác tự
-/// chạy StoreKit 2; engine này chỉ cung cấp dữ liệu, ở bên dưới.)
+/// The screen itself is `TNPaywallScreen` in TNSubscriptionShared, shared with every engine; this
+/// engine only supplies the data, below.
+/// (Màn hình thật là `TNPaywallScreen` trong TNSubscriptionShared, dùng chung với mọi engine; engine
+/// này chỉ cung cấp dữ liệu, ở bên dưới.)
 public struct TNDefaultPaywallView: View {
 
     public let config: DefaultPaywallConfig
@@ -47,7 +47,9 @@ extension TNSubscriptionAdapty: TNPaywallEngine {
     }
 }
 
-extension TNPackage: TNPaywallPackage {}
+extension TNPackage: TNPaywallPackage {
+    package var paywallPackageType: TNPackageType { packageType }
+}
 
 extension TNEntitlementInfo: TNPaywallEntitlement {}
 

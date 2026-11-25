@@ -60,11 +60,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     // MARK: - Published State
     
-    public enum EntitlementState {
-        case unknown
-        case locked
-        case unlocked
-    }
+    public typealias EntitlementState = TNEntitlementState
     
     @Published public var entitlementState: EntitlementState = .unknown
     @Published public var customerInfo: CustomerInfo?
@@ -164,6 +160,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     public static var logLevel: TNLogLevel {
         get { TNLog.level }
         set {
+            TNLog.setConsolePrefix("TNSubscriptionIOS")
             TNLog.level = newValue
             if let rcLevel = newValue.revenueCatLevel {
                 Purchases.logLevel = rcLevel
@@ -187,6 +184,7 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     public static var logHandler: ((TNLogLevel, String) -> Void)? {
         get { TNLog.handler }
         set {
+            TNLog.setConsolePrefix("TNSubscriptionIOS")
             TNLog.handler = newValue
             if let newValue = newValue {
                 // Forward RevenueCat's own diagnostics through the same sink.
@@ -338,126 +336,34 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     }
     
     // MARK: - Persistent Client ID & Identity Headers (Backend API & RevenueCat)
-    
-    private static let clientIdKeychainAccount = "client_id"
-    private static let clientIdUserDefaultsKey = "persistent_client_id"
-    internal static let keychainService: String = Bundle.main.bundleIdentifier ?? "com.tnsubscription.ios"
-    private static var cachedClientId: String?
+
+    // The ID and its Keychain storage are `TNIdentity`, shared with every engine. This engine only
+    // adds one thing: the first read after RevenueCat is configured also sends `client_id` to
+    // RevenueCat as a subscriber attribute.
+    // (ID và phần lưu Keychain là `TNIdentity`, dùng chung với mọi engine. Engine này chỉ thêm một
+    // việc: lần đọc đầu sau khi cấu hình RevenueCat sẽ gửi `client_id` lên RevenueCat làm attribute.)
     private static var didSyncClientIdToRC = false
     private static let clientIdLock = NSLock()
-    
-    /// A persistent, unique client ID stored in Keychain (survives app reinstalls) and cached in memory for $O(1)$ access.
-    ///
-    /// **Optional**: Only needed when your app calls a custom Backend API or Proxy Gateway (`X-Client-Id` header).
-    /// Serverless apps (using only StoreKit 2 / RevenueCat) do not need to use this property.
+
     public static var clientId: String {
+        let resolvedId = TNIdentity.clientId
         clientIdLock.lock()
-        let resolvedId: String
-        if let memoryCached = cachedClientId, !memoryCached.isEmpty {
-            resolvedId = memoryCached
-        } else if let keychainId = loadFromKeychain(account: clientIdKeychainAccount), !keychainId.isEmpty {
-            cachedClientId = keychainId
-            resolvedId = keychainId
-        } else if let defaultsId = UserDefaults.standard.string(forKey: clientIdUserDefaultsKey), !defaultsId.isEmpty {
-            saveToKeychain(account: clientIdKeychainAccount, value: defaultsId)
-            cachedClientId = defaultsId
-            resolvedId = defaultsId
-        } else {
-            let newId = UUID().uuidString
-            saveToKeychain(account: clientIdKeychainAccount, value: newId)
-            UserDefaults.standard.set(newId, forKey: clientIdUserDefaultsKey)
-            cachedClientId = newId
-            resolvedId = newId
-        }
         let shouldSync = !didSyncClientIdToRC && Purchases.isConfigured
-        if shouldSync {
-            didSyncClientIdToRC = true
-        }
+        if shouldSync { didSyncClientIdToRC = true }
         clientIdLock.unlock()
-        
         if shouldSync {
             Purchases.shared.attribution.setAttributes(["client_id": resolvedId])
         }
         return resolvedId
     }
-    
-    /// The hardware vendor device identifier (`UIDevice.current.identifierForVendor?.uuidString`).
-    public static var deviceId: String {
-        UIDevice.current.identifierForVendor?.uuidString ?? ""
-    }
-    
-    /// Standard TN Studio Proxy Gateway client identity HTTP headers (`X-Client-Id`, `X-Device-Id`, and optional `X-User-Id`).
-    ///
-    /// - Parameter userId: Optional authenticated user ID.
-    /// - Returns: Dictionary of HTTP header fields.
+
+    public static var deviceId: String { TNIdentity.deviceId }
+
     public static func identityHeaders(userId: String? = nil) -> [String: String] {
-        var headers: [String: String] = [
-            "X-Client-Id": clientId
-        ]
-        let devId = deviceId
-        if !devId.isEmpty {
-            headers["X-Device-Id"] = devId
-        }
-        if let uid = userId, !uid.isEmpty {
-            headers["X-User-Id"] = uid
-        }
-        return headers
+        _ = clientId  // keeps the RevenueCat attribute sync on this path too
+        return TNIdentity.identityHeaders(userId: userId)
     }
-    
-    // MARK: - Keychain Helpers
-    
-    internal static func loadFromKeychain(account: String) -> String? {
-        // 1. Query with kSecAttrService
-        let scopedQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        let scopedStatus = SecItemCopyMatching(scopedQuery as CFDictionary, &result)
-        if scopedStatus == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8), !value.isEmpty {
-            return value
-        }
-        
-        // 2. Backward-compatible fallback: query legacy item without kSecAttrService and migrate
-        let legacyQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne
-        ]
-        var legacyResult: AnyObject?
-        let legacyStatus = SecItemCopyMatching(legacyQuery as CFDictionary, &legacyResult)
-        guard legacyStatus == errSecSuccess, let data = legacyResult as? Data, let legacyValue = String(data: data, encoding: .utf8), !legacyValue.isEmpty else {
-            return nil
-        }
-        saveToKeychain(account: account, value: legacyValue)
-        return legacyValue
-    }
-    
-    internal static func saveToKeychain(account: String, value: String) {
-        guard let data = value.data(using: .utf8) else { return }
-        
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: account
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
-        
-        let addQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: keychainService,
-            kSecAttrAccount as String: account,
-            kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        ]
-        SecItemAdd(addQuery as CFDictionary, nil)
-    }
-    
-    /// Syncs the persistent client_id to RevenueCat as a custom subscriber attribute.
+
     private static func syncClientIdToRevenueCat() {
         guard Purchases.isConfigured else { return }
         let id = clientId
@@ -687,33 +593,36 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     
     /// Returns a human-readable name for a given product ID.
     public static func displayName(forProductID productID: String) -> String {
-        let lower = productID.lowercased()
-        if lower.contains("week") { return NSLocalizedString("Weekly", comment: "") }
-        if lower.contains("month") { return NSLocalizedString("Monthly", comment: "") }
-        if lower.contains("year") || lower.contains("annual") { return NSLocalizedString("Yearly", comment: "") }
-        if lower.contains("life") { return NSLocalizedString("Lifetime", comment: "") }
-        return NSLocalizedString("Premium", comment: "")
+        TNPackageType.displayName(forProductID: productID)
     }
     
     /// Sort order for package types (used by default paywall).
     public static func packageSortOrder(_ package: Package) -> Int {
-        switch package.packageType {
-        case .lifetime: return 0
-        case .annual: return 1
-        case .sixMonth: return 2
-        case .threeMonth: return 3
-        case .twoMonth: return 4
-        case .monthly: return 5
-        case .weekly: return 6
-        case .custom: return 7
-        case .unknown: return 8
-        @unknown default: return 9
-        }
+        TNPackageType(revenueCat: package.packageType).sortOrder
     }
     
     /// Whether a package should be marked as "recommended" (defaults to annual plans).
     nonisolated public static func isRecommendedPackage(_ package: Package) -> Bool {
         package.packageType == .annual || package.storeProduct.productIdentifier.lowercased().contains("yearly")
+    }
+
+    /// Instance form of `isRecommendedPackage(_:)`, named as in the other engines.
+    /// (Dạng instance của `isRecommendedPackage(_:)`, cùng tên với các engine khác.)
+    public func isRecommended(_ package: Package) -> Bool {
+        Self.isRecommendedPackage(package)
+    }
+
+    /// RevenueCat's details for one entitlement, or `nil` if the user never had it.
+    /// (Chi tiết RevenueCat của một quyền lợi, hoặc `nil` nếu người dùng chưa từng có.)
+    public func entitlementInfo(for entitlementId: String) -> EntitlementInfo? {
+        customerInfo?.entitlements[entitlementId]
+    }
+
+    /// Presents Apple's Manage Subscriptions sheet, falling back to the App Store page.
+    /// (Hiển thị bảng Quản lý đăng ký của Apple, nếu không được thì mở trang App Store.)
+    @MainActor
+    public func showManageSubscriptions() {
+        TNAppStoreSheets.showManageSubscriptions()
     }
     
     /// Fetches available offerings from RevenueCat (fire-and-forget).
@@ -827,40 +736,18 @@ public final class TNSubscriptionIOS: NSObject, ObservableObject {
     /// Returns a human-readable summary of the introductory offer if the user is eligible
     /// (e.g. `"3-Day Free Trial"` or `"$0.99 for 1 Month"`), or `nil` if not eligible.
     public func introOfferSummary(for package: Package) -> String? {
-        guard let discount = introOffer(for: package) else { return nil }
-        let periodText = Self.formatSubscriptionPeriod(discount.subscriptionPeriod, numberOfPeriods: discount.numberOfPeriods)
-        switch discount.paymentMode {
-        case .freeTrial:
-            return String(format: NSLocalizedString("%@ Free Trial", comment: ""), periodText)
-        case .payAsYouGo, .payUpFront:
-            return String(format: NSLocalizedString("%@ for %@", comment: ""), discount.localizedPriceString, periodText)
-        @unknown default:
-            return nil
-        }
+        introOffer(for: package)?.localizedSummary
     }
     
     /// Formats a RevenueCat `SubscriptionPeriod` into a localized string (e.g. `"3 Days"`, `"1 Week"`, `"1 Month"`).
     public static func formatSubscriptionPeriod(_ period: RevenueCat.SubscriptionPeriod, numberOfPeriods: Int = 1) -> String {
-        let totalUnits = max(1, period.value * max(1, numberOfPeriods))
+        let count = period.value * max(1, numberOfPeriods)
         switch period.unit {
-        case .day:
-            return totalUnits == 1
-                ? NSLocalizedString("1 Day", comment: "")
-                : String(format: NSLocalizedString("%d Days", comment: ""), totalUnits)
-        case .week:
-            return totalUnits == 1
-                ? NSLocalizedString("1 Week", comment: "")
-                : String(format: NSLocalizedString("%d Weeks", comment: ""), totalUnits)
-        case .month:
-            return totalUnits == 1
-                ? NSLocalizedString("1 Month", comment: "")
-                : String(format: NSLocalizedString("%d Months", comment: ""), totalUnits)
-        case .year:
-            return totalUnits == 1
-                ? NSLocalizedString("1 Year", comment: "")
-                : String(format: NSLocalizedString("%d Years", comment: ""), totalUnits)
-        @unknown default:
-            return "\(totalUnits)"
+        case .day: return TNPeriodFormatter.string(unit: .day, count: count)
+        case .week: return TNPeriodFormatter.string(unit: .week, count: count)
+        case .month: return TNPeriodFormatter.string(unit: .month, count: count)
+        case .year: return TNPeriodFormatter.string(unit: .year, count: count)
+        @unknown default: return "\(max(1, count))"
         }
     }
     
@@ -1214,20 +1101,4 @@ extension TNSubscriptionIOS: PurchasesDelegate {
     }
 }
 
-// MARK: - URLRequest Identity Headers Extension
-
-public extension URLRequest {
-    /// Attaches standard TN Studio Proxy Gateway client identity headers (`X-Client-Id`, `X-Device-Id`, and optional `X-User-Id`).
-    mutating func applyTNIdentityHeaders(userId: String? = nil) {
-        for (header, value) in TNSubscriptionIOS.identityHeaders(userId: userId) {
-            setValue(value, forHTTPHeaderField: header)
-        }
-    }
-    
-    /// Returns a copy of the request with TN Studio Proxy Gateway client identity headers attached.
-    func applyingTNIdentityHeaders(userId: String? = nil) -> URLRequest {
-        var copy = self
-        copy.applyTNIdentityHeaders(userId: userId)
-        return copy
-    }
-}
+// `URLRequest.applyTNIdentityHeaders` / `applyingTNIdentityHeaders` live in TNSubscriptionShared.

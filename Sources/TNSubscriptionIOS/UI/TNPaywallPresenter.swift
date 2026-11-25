@@ -51,41 +51,16 @@ extension TNSubscriptionIOS {
         let view = content()
         presentSwiftUIView(view, from: viewController)
     }
-    
+
     // MARK: - Internal Presentation Helper
-    
+
+    // The page-sheet and top-most-controller logic is shared with every engine
+    // (`TNPaywallPresentation` in TNSubscriptionShared).
+    // (Phần page sheet và tìm controller trên cùng dùng chung với mọi engine.)
     private static func presentSwiftUIView<Content: View>(
         _ view: Content,
         from viewController: UIViewController
     ) {
-        let hostingController = UIHostingController(rootView: view)
-        hostingController.modalPresentationStyle = .pageSheet
-        
-        if let sheet = hostingController.sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = true
-            sheet.preferredCornerRadius = 24
-        }
-        
-        let targetPresenter = viewController.tn_topMostViewController()
-        targetPresenter.present(hostingController, animated: true)
-    }
-}
-
-// MARK: - UIViewController Extension
-
-extension UIViewController {
-    /// Traverses the view controller hierarchy to find the topmost presented controller.
-    func tn_topMostViewController() -> UIViewController {
-        if let presented = self.presentedViewController {
-            return presented.tn_topMostViewController()
-        }
-        if let navigation = self as? UINavigationController {
-            return navigation.visibleViewController?.tn_topMostViewController() ?? navigation
-        }
-        if let tab = self as? UITabBarController {
-            return tab.selectedViewController?.tn_topMostViewController() ?? tab
-        }
-        return self
+        TNPaywallPresentation.present(view, from: viewController)
     }
 }

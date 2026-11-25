@@ -34,67 +34,7 @@ extension TNLogLevel {
     }
 }
 
-// MARK: - TNLog
-
-/// Internal logger. Routes messages to `TNSubscriptionIOS.logHandler` when the host app
-/// installed one, otherwise to `print`.
-///
-/// Messages are passed as autoclosures, so string interpolation is never evaluated
-/// for a message that the current threshold filters out.
-enum TNLog {
-
-    private static let lock = NSLock()
-    private static var _level: TNLogLevel = .default
-    private static var _handler: ((TNLogLevel, String) -> Void)?
-
-    /// The current threshold. Messages below it are dropped.
-    static var level: TNLogLevel {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return _level
-        }
-        set {
-            lock.lock()
-            _level = newValue
-            lock.unlock()
-        }
-    }
-
-    /// The host app's log sink, if installed.
-    static var handler: ((TNLogLevel, String) -> Void)? {
-        get {
-            lock.lock()
-            defer { lock.unlock() }
-            return _handler
-        }
-        set {
-            lock.lock()
-            _handler = newValue
-            lock.unlock()
-        }
-    }
-
-    /// Emits a message if `level` meets the current threshold.
-    static func log(_ level: TNLogLevel, _ message: @autoclosure () -> String) {
-        lock.lock()
-        let threshold = _level
-        let sink = _handler
-        lock.unlock()
-
-        guard threshold != .none, level >= threshold else { return }
-
-        let text = message()
-        if let sink = sink {
-            sink(level, text)
-        } else {
-            print("[TNSubscriptionIOS][\(level)] \(text)")
-        }
-    }
-
-    static func verbose(_ message: @autoclosure () -> String) { log(.verbose, message()) }
-    static func debug(_ message: @autoclosure () -> String) { log(.debug, message()) }
-    static func info(_ message: @autoclosure () -> String) { log(.info, message()) }
-    static func warn(_ message: @autoclosure () -> String) { log(.warn, message()) }
-    static func error(_ message: @autoclosure () -> String) { log(.error, message()) }
-}
+// `TNLog` itself lives in TNSubscriptionShared, shared with every engine; this engine only points
+// its output at `print` (see `TNSubscriptionIOS.logLevel`), as it always has.
+// (`TNLog` nằm trong TNSubscriptionShared, dùng chung với mọi engine; engine này chỉ đặt output ra
+// `print` — xem `TNSubscriptionIOS.logLevel` — như từ trước tới nay.)

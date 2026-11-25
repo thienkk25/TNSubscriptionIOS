@@ -350,14 +350,4 @@ extension StoreKit.Transaction {
         if ownershipType == .familyShared { return .familyShared }
         return .appStore
     }
-
-    /// `true` when this transaction currently grants access: verified upstream,
-    /// not revoked, and not past its expiration date.
-    /// (`true` khi giao dịch này đang cấp quyền truy cập: đã xác minh ở tầng trên,
-    /// chưa bị thu hồi, và chưa qua ngày hết hạn.)
-    func tn_isEntitling(asOf now: Date = Date()) -> Bool {
-        guard revocationDate == nil else { return false }
-        if let expirationDate { return expirationDate > now }
-        return true
-    }
 }

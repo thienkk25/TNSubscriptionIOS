@@ -2,7 +2,7 @@ import XCTest
 import UIKit
 @testable import TNSubscriptionAdapty
 
-/// The engine contract — this file is IDENTICAL in all three engine test targets except for the
+/// The engine contract — this file is IDENTICAL in all four engine test targets except for the
 /// `import` line above. It uses only the shared configuration and the `TNSubscription` alias, so if
 /// any engine's public surface drifts from the others, that engine's copy stops compiling.
 /// (Contract của engine — file này GIỐNG HỆT nhau ở cả ba test target, chỉ khác dòng `import` ở
@@ -154,6 +154,10 @@ final class TNEngineContractTests: XCTestCase {
         let _: String? = engine.currentPlanProductID
         let _: String? = engine.currentPlanDisplayName
         let _: String? = engine.currentProductID(for: "Premium")
+        let _: TNEntitlementState = engine.entitlementState
+        let _ = engine.entitlementInfo(for: "Premium")
+        let _: Bool = engine.availablePackages.first.map(engine.isRecommended) ?? false
+        engine.showManageSubscriptions()
         engine.checkSubscriptionStatus()
         engine.fetchOfferings(offeringIdentifier: nil)
         await engine.resolveEntitlement()
@@ -170,6 +174,9 @@ final class TNEngineContractTests: XCTestCase {
         TNSubscription.logHandler = nil
 
         let _ = TNDefaultPaywallView(config: DefaultPaywallConfig())
+        TNSubscription.presentDefaultPaywall(from: UIViewController(), config: DefaultPaywallConfig())
+        let _: String = TNIdentity.clientId
+        let _: URLRequest = URLRequest(url: URL(string: "https://example.com")!).applyingTNIdentityHeaders()
 
         TNConsumableManager.configure(products: [TNConsumableProduct(id: "c", reward: 1, currency: "coins")])
         let coins = TNConsumableManager.shared!
@@ -180,6 +187,9 @@ final class TNEngineContractTests: XCTestCase {
         coins.addBalance(1, for: "coins")
         let _: Bool = coins.deductBalance(1, for: "coins")
         coins.setBalance(0, for: "coins")
+        let _: Bool = TNConsumableManager.isConfigured
+        coins.configureSpendHandler { _, _, _ in true }
+        let _: Bool = try await coins.spendAsync(1, currency: "coins")
     }
 
     /// Settings this engine cannot honour are reported, never silently dropped.

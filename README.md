@@ -1279,15 +1279,15 @@ let rcKey = "appl_YOUR_APP_STORE_KEY"
 
 ```
 Sources/
-  TNSubscriptionShared/   config types + API key recognition (TNVendorKey), used by every engine
-  TNSubscriptionKit/      code shared by Core, Adapty and Qonversion: log, identity, consumables,
-                          warm-start cache, Apple sheets, price maths, the built-in paywall
+  TNSubscriptionShared/   everything the engines have in common: config types, API key recognition,
+                          log, identity, consumables, warm-start cache, StoreKit grants, price maths,
+                          Apple sheets and the built-in paywall (TNPaywallScreen)
   TNSubscriptionIOS/      RevenueCat engine    → depends on Shared + RevenueCat
-  TNSubscriptionCore/     StoreKit 2 engine    → depends on Kit only
-  TNSubscriptionAdapty/   Adapty engine        → depends on Kit + Adapty
-  TNSubscriptionQonversion/ Qonversion engine  → depends on Kit + Qonversion (QonversionNoIdfa)
+  TNSubscriptionCore/     StoreKit 2 engine    → depends on Shared only
+  TNSubscriptionAdapty/   Adapty engine        → depends on Shared + Adapty
+  TNSubscriptionQonversion/ Qonversion engine  → depends on Shared + Qonversion (QonversionNoIdfa)
 Tests/
-  TNSubscriptionSharedTests/  TNSubscriptionKitTests/   shared logic, tested once
+  TNSubscriptionSharedTests/   shared logic, tested once
   TNSubscriptionIOSTests/  TNSubscriptionCoreTests/  TNSubscriptionAdaptyTests/  TNSubscriptionQonversionTests/
     └─ each contains TNEngineContractTests.swift (identical except its import line)
 IntegrationTests/         Xcode host app + .storekit file — real purchases for TNSubscriptionCore
@@ -1298,21 +1298,26 @@ IntegrationTests/         Xcode host app + .storekit file — real purchases for
 - **A configuration type goes in `TNSubscriptionShared`, never in an engine.** Copies in each engine
   are how the three drifted apart before. (**Kiểu cấu hình đặt trong `TNSubscriptionShared`, không bao
   giờ đặt trong engine.** Mỗi engine giữ một bản sao chính là lý do ba engine từng lệch nhau.)
-- **Logic that is the same in Core, Adapty and Qonversion goes in `TNSubscriptionKit`**, as
-  `package` API; the engine keeps only a thin public wrapper. Only what touches a vendor SDK's types
-  stays in an engine. The paywall is `TNPaywallScreen`, written once against the `TNPaywallEngine`
-  protocol; each engine's `TNDefaultPaywallView` is a wrapper around it. (**Logic giống nhau ở Core,
-  Adapty và Qonversion đặt trong `TNSubscriptionKit`** dưới dạng API `package`; engine chỉ giữ lớp bọc
-  public mỏng. Chỉ phần đụng tới kiểu dữ liệu của SDK nhà cung cấp mới ở lại engine. Paywall là
-  `TNPaywallScreen`, viết một lần theo protocol `TNPaywallEngine`; `TNDefaultPaywallView` của mỗi engine
-  chỉ bọc nó.)
-- **Why the RevenueCat engine does not use Kit.** Its `TNConsumableManager`, log and paywall predate
-  Kit and have a different public API (e.g. a non-`@MainActor` consumable manager), and apps in
-  production depend on it. Moving it would be a breaking change for no user benefit. It shares the
-  consumable storage keys, so balances still carry over. (**Vì sao engine RevenueCat không dùng Kit.**
-  `TNConsumableManager`, log và paywall của nó có trước Kit với API public khác — ví dụ consumable
-  manager không phải `@MainActor` — và app đang chạy thật phụ thuộc vào nó. Chuyển sang sẽ phá API mà
-  người dùng không được lợi gì. Nó dùng chung key lưu consumable, nên số dư vẫn được giữ khi đổi engine.)
+- **Logic that is the same in more than one engine goes in `TNSubscriptionShared`**, as `package`
+  API; the engine keeps only a thin public wrapper. Only what reads or writes a vendor SDK's own types
+  stays in an engine: the model types (`TNPackage`, `TNCustomerInfo`, `TNSubscriptionOffer`, RevenueCat's
+  `Package`), the SDK calls, and the mapping between them. The paywall is `TNPaywallScreen`, written once
+  against the `TNPaywallEngine` protocol; each engine's `TNDefaultPaywallView` only supplies its data.
+  `TNConsumableManager` and `TNIdentity` are one class each for all four engines.
+  (**Logic giống nhau ở hơn một engine đặt trong `TNSubscriptionShared`** dưới dạng API `package`; engine
+  chỉ giữ lớp bọc public mỏng. Chỉ phần đọc/ghi kiểu dữ liệu riêng của SDK nhà cung cấp mới ở lại
+  engine: kiểu model, lời gọi SDK, và phần chuyển đổi giữa chúng. Paywall là `TNPaywallScreen`, viết một
+  lần theo protocol `TNPaywallEngine`; `TNDefaultPaywallView` của mỗi engine chỉ cung cấp dữ liệu.
+  `TNConsumableManager` và `TNIdentity` là một class duy nhất cho cả bốn engine.)
+- **A shared public type must not change behaviour any engine's apps rely on.** `TNConsumableManager`
+  keeps the RevenueCat engine's looser isolation (state changes are `@MainActor`, reads are not, the
+  published properties are settable) so released RevenueCat code compiles unchanged; `TNIdentity`
+  keeps its Keychain behaviour (`ThisDeviceOnly`, the legacy-item fallback) so existing users keep
+  their `clientId`. (**Kiểu public dùng chung không được đổi hành vi mà app của bất kỳ engine nào đang
+  dựa vào.** `TNConsumableManager` giữ cách cô lập lỏng hơn của engine RevenueCat — thay đổi trạng thái
+  là `@MainActor`, đọc thì không, thuộc tính published gán được — để code RevenueCat đã phát hành vẫn
+  compile; `TNIdentity` giữ hành vi Keychain — `ThisDeviceOnly`, fallback item cũ — để người dùng cũ
+  giữ nguyên `clientId`.)
 - **A new vendor key prefix** goes in `TNVendorKey.knownPrefixes`, once; every engine then recognises
   it. (**Tiền tố key mới** thêm vào `TNVendorKey.knownPrefixes`, một lần; mọi engine cùng nhận ra.)
 - **A new config field** goes into `TNSubscriptionConfig` with a default value, appended after the

@@ -37,8 +37,8 @@ extension TNLogLevel {
 
 // MARK: - Adapty Log Bridge
 
-// `TNLog` itself lives in TNSubscriptionKit; only the bridge to Adapty's logger is engine-specific.
-// (`TNLog` nằm trong TNSubscriptionKit; chỉ phần nối sang logger của Adapty là riêng của engine.)
+// `TNLog` itself lives in TNSubscriptionShared; only the bridge to Adapty's logger is engine-specific.
+// (`TNLog` nằm trong TNSubscriptionShared; chỉ phần nối sang logger của Adapty là riêng của engine.)
 extension TNLog {
 
     /// Routes Adapty's own log records through `TNLog`, so one threshold and one handler govern

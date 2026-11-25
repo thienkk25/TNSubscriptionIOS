@@ -1,7 +1,7 @@
 import Foundation
 import StoreKit
 
-// `TNIntroEligibilityStatus` lives in TNSubscriptionKit. (`TNIntroEligibilityStatus` nằm trong TNSubscriptionKit.)
+// `TNIntroEligibilityStatus` lives in TNSubscriptionShared. (`TNIntroEligibilityStatus` nằm trong TNSubscriptionShared.)
 
 // MARK: - TNOfferPaymentMode
 
@@ -17,15 +17,6 @@ public enum TNOfferPaymentMode: String, Hashable, Sendable {
     /// A reduced price charged each period, for a number of periods.
     /// (Trả giá giảm theo từng kỳ, trong một số kỳ nhất định.)
     case payAsYouGo
-
-    init?(_ mode: Product.SubscriptionOffer.PaymentMode) {
-        switch mode {
-        case .freeTrial: self = .freeTrial
-        case .payUpFront: self = .payUpFront
-        case .payAsYouGo: self = .payAsYouGo
-        default: return nil
-        }
-    }
 }
 
 // MARK: - TNOfferType
@@ -101,33 +92,18 @@ public struct TNSubscriptionOffer: Identifiable, Hashable, Sendable {
     /// A localised summary such as `"3 Days Free Trial"` or `"$0.99 for 1 Month"`.
     /// (Mô tả đã dịch, ví dụ `"Dùng thử miễn phí 3 Ngày"` hoặc `"0,99 $ trong 1 Tháng"`.)
     public var localizedSummary: String {
-        let periodText = period.localizedDescription(numberOfPeriods: periodCount)
-        switch paymentMode {
-        case .freeTrial:
-            return String(format: NSLocalizedString("%@ Free Trial", comment: ""), periodText)
-        case .payAsYouGo, .payUpFront:
-            return String(format: NSLocalizedString("%@ for %@", comment: ""), localizedPriceString, periodText)
-        }
+        TNOfferRules.summary(
+            isFreeTrial: paymentMode == .freeTrial,
+            localizedPrice: localizedPriceString,
+            periodText: period.localizedDescription(numberOfPeriods: periodCount)
+        )
     }
 
     init?(storeKitOffer: Product.SubscriptionOffer, product: Product) {
-        guard let paymentMode = TNOfferPaymentMode(storeKitOffer.paymentMode) else { return nil }
-
-        // Note: there is no `.code` case here. An offer code is not configured on the
-        // product — it only ever appears on a *transaction*, after the user redeems it.
-        let resolvedType: TNOfferType
-        switch storeKitOffer.type {
-        case .introductory:
-            resolvedType = .introductory
-        case .promotional:
-            resolvedType = .promotional
-        default:
-            if #available(iOS 18.0, *), storeKitOffer.type == .winBack {
-                resolvedType = .winBack
-            } else {
-                return nil
-            }
-        }
+        // The mapping rules live in TNSubscriptionShared; only the public types are this engine's.
+        guard let kind = TNOfferRules.storeKitKind(of: storeKitOffer),
+              let resolvedType = TNOfferType(rawValue: kind.type),
+              let paymentMode = TNOfferPaymentMode(rawValue: kind.paymentMode) else { return nil }
 
         self.storeKitOffer = storeKitOffer
         self.productIdentifier = product.id

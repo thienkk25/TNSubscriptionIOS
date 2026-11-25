@@ -2,7 +2,7 @@ import XCTest
 import StoreKit
 import StoreKitTest
 @testable import TNSubscriptionCore
-@testable import TNSubscriptionKit
+@testable import TNSubscriptionShared
 
 // MARK: - Test Product IDs
 

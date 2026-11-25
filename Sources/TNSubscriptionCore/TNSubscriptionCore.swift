@@ -6,13 +6,11 @@ import UIKit
 
 // MARK: - Shared Configuration
 
-// The configuration types live in TNSubscriptionShared, and the code this engine shares with the
-// Adapty and Qonversion engines (consumables, identity, logging, the paywall) in TNSubscriptionKit,
-// which re-exports TNSubscriptionShared.
-// (Các kiểu cấu hình nằm trong TNSubscriptionShared; phần code dùng chung với engine Adapty và
-// Qonversion — consumable, identity, log, paywall — nằm trong TNSubscriptionKit, module này re-export
-// luôn TNSubscriptionShared.)
-@_exported import TNSubscriptionKit
+// Everything this engine shares with the other engines — configuration, consumables, identity,
+// logging, the paywall — lives in TNSubscriptionShared.
+// (Mọi thứ engine này dùng chung với các engine khác — cấu hình, consumable, identity, log, paywall —
+// nằm trong TNSubscriptionShared.)
+@_exported import TNSubscriptionShared
 
 /// The engine-neutral name for this engine's entry point. Code that uses only the shared
 /// configuration and the common API compiles against any engine unchanged; the exact list is in
@@ -468,105 +466,47 @@ public final class TNSubscriptionCore: ObservableObject {
     /// Walks every current entitlement Apple reports and assembles a `TNCustomerInfo`.
     /// (Duyệt mọi quyền lợi hiện tại Apple báo về và dựng nên một `TNCustomerInfo`.)
     private func buildCustomerInfo() async -> TNCustomerInfo {
-        var entitlementInfos: [String: TNEntitlementInfo] = [:]
-        var activeSubscriptions: Set<String> = []
-        var allOwned: Set<String> = []
-        var nonSubscriptions: Set<String> = []
-        var latestExpiration: Date?
-        var earliestPurchase: Date?
-        var inspected = 0
-        var unverified = 0
-
         let now = Date()
+        let grants = await TNStoreKitGrants.current(for: config.entitlements, now: now)
 
-        for await result in StoreKit.Transaction.currentEntitlements {
-            guard case .verified(let transaction) = result else {
-                unverified += 1
-                TNLog.warn("Skipping an UNVERIFIED StoreKit transaction (failed on-device JWS validation).")
-                continue
+        var entitlementInfos: [String: TNEntitlementInfo] = [:]
+        // Two entitlements can share one transaction; ask Apple about its renewal only once.
+        var renewals: [UInt64: (willRenew: Bool, issue: TNSubscriptionIssue?)] = [:]
+        for (entitlementId, transaction) in grants.transactions {
+            let renewal: (willRenew: Bool, issue: TNSubscriptionIssue?)
+            if let known = renewals[transaction.id] {
+                renewal = known
+            } else {
+                renewal = await renewalState(for: transaction)
+                renewals[transaction.id] = renewal
             }
-
-            inspected += 1
-
-            guard transaction.tn_isEntitling(asOf: now) else {
-                TNLog.debug("Skipping \(transaction.productID): revoked=\(transaction.revocationDate != nil), expiry=\(transaction.expirationDate.map(String.init(describing:)) ?? "none").")
-                continue
-            }
-
-            allOwned.insert(transaction.productID)
-
-            if transaction.productType == .autoRenewable {
-                activeSubscriptions.insert(transaction.productID)
-            } else if transaction.productType == .nonConsumable {
-                nonSubscriptions.insert(transaction.productID)
-            }
-
-            if let expiry = transaction.expirationDate {
-                latestExpiration = max(latestExpiration ?? expiry, expiry)
-            }
-            let originalDate = transaction.originalPurchaseDate
-            earliestPurchase = min(earliestPurchase ?? originalDate, originalDate)
-
-            TNLog.verbose("Inspecting StoreKit entitlement for \(transaction.productID).")
-
-            // Which configured entitlements does this transaction grant?
-            let matched = config.entitlements.filter { $0.productIDs.contains(transaction.productID) }
-
-            if matched.isEmpty {
-                TNLog.debug("""
-                StoreKit transaction for \(transaction.productID) matched NO configured entitlement. \
-                Configured product IDs: \(config.allProductIDs.sorted()).
-                """)
-                continue
-            }
-
-            let renewal = await renewalState(for: transaction)
-            let periodType = resolvePeriodType(for: transaction)
-
-            for entitlement in matched {
-                let info = TNEntitlementInfo(
-                    identifier: entitlement.id,
-                    isActive: true,
-                    productIdentifier: transaction.productID,
-                    willRenew: renewal.willRenew,
-                    periodType: periodType,
-                    latestPurchaseDate: transaction.purchaseDate,
-                    originalPurchaseDate: transaction.originalPurchaseDate,
-                    expirationDate: transaction.expirationDate,
-                    revocationDate: transaction.revocationDate,
-                    store: transaction.tn_store,
-                    isSandbox: transaction.tn_isSandbox,
-                    ownershipType: transaction.tn_ownershipType,
-                    issue: renewal.issue,
-                    transaction: transaction
-                )
-
-                // A lifetime purchase beats a subscription for the same entitlement:
-                // it never expires, so it is the stronger grant to report.
-                if let existing = entitlementInfos[entitlement.id] {
-                    let existingIsLifetime = existing.expirationDate == nil
-                    let newIsLifetime = info.expirationDate == nil
-                    let newExpiresLater = (info.expirationDate ?? .distantFuture) > (existing.expirationDate ?? .distantFuture)
-                    if newIsLifetime && !existingIsLifetime {
-                        entitlementInfos[entitlement.id] = info
-                    } else if !existingIsLifetime && newExpiresLater {
-                        entitlementInfos[entitlement.id] = info
-                    }
-                } else {
-                    entitlementInfos[entitlement.id] = info
-                }
-            }
+            entitlementInfos[entitlementId] = TNEntitlementInfo(
+                identifier: entitlementId,
+                isActive: true,
+                productIdentifier: transaction.productID,
+                willRenew: renewal.willRenew,
+                periodType: resolvePeriodType(for: transaction),
+                latestPurchaseDate: transaction.purchaseDate,
+                originalPurchaseDate: transaction.originalPurchaseDate,
+                expirationDate: transaction.expirationDate,
+                revocationDate: transaction.revocationDate,
+                store: transaction.tn_store,
+                isSandbox: transaction.tn_isSandbox,
+                ownershipType: transaction.tn_ownershipType,
+                issue: renewal.issue,
+                transaction: transaction
+            )
         }
 
-        TNLog.verbose("buildCustomerInfo inspected \(inspected) entitlement(s), skipped \(unverified) unverified; active=\(entitlementInfos.keys.sorted()).")
+        TNLog.verbose("buildCustomerInfo inspected \(grants.inspected) entitlement(s), skipped \(grants.unverified) unverified; active=\(entitlementInfos.keys.sorted()).")
 
         return TNCustomerInfo(
             entitlements: TNEntitlementInfos(all: entitlementInfos),
-            activeSubscriptions: activeSubscriptions,
-            allPurchasedProductIdentifiers: allOwned,
-            nonSubscriptionProductIdentifiers: nonSubscriptions,
-            latestExpirationDate: latestExpiration,
-            originalPurchaseDate: earliestPurchase,
+            activeSubscriptions: grants.subscriptionProductIDs,
+            allPurchasedProductIdentifiers: grants.ownedProductIDs,
+            nonSubscriptionProductIdentifiers: grants.nonSubscriptionProductIDs,
+            latestExpirationDate: grants.latestExpiration,
+            originalPurchaseDate: grants.earliestPurchase,
             requestDate: now
         )
     }

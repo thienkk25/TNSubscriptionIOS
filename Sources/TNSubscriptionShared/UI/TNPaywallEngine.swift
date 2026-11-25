@@ -1,13 +1,12 @@
 import Foundation
 import SwiftUI
-import UIKit
 
 // MARK: - What The Paywall Needs
 
-/// What the built-in paywall reads from an engine. Every member already exists on the engines
-/// under the same name, so conforming is a one-line extension plus the `paywall…` adapters.
-/// (Những gì paywall có sẵn đọc từ một engine. Mọi thành viên đã có sẵn trên engine với cùng tên,
-/// nên việc tuân theo chỉ là một extension một dòng cộng với các hàm chuyển đổi `paywall…`.)
+/// What the built-in paywall reads from an engine. Almost every member already exists on the engines
+/// under the same name, so conforming is a short extension plus the `paywall…` adapters.
+/// (Những gì paywall có sẵn đọc từ một engine. Hầu hết thành viên đã có sẵn trên engine với cùng tên,
+/// nên việc tuân theo chỉ là một extension ngắn cộng với các hàm chuyển đổi `paywall…`.)
 @MainActor
 package protocol TNPaywallEngine: ObservableObject {
     associatedtype Package: TNPaywallPackage
@@ -43,16 +42,30 @@ package protocol TNPaywallEngine: ObservableObject {
     /// Called once the paywall has loaded. Only vendors that count paywall views need it.
     /// (Được gọi khi paywall đã tải xong. Chỉ nhà cung cấp nào đếm lượt xem paywall mới cần.)
     func paywallDidAppear() async
+
+    /// How to show a failed purchase. The default reads `TNPaywallPurchaseError`; an engine whose
+    /// SDK throws its own errors (RevenueCat) maps those too.
+    /// (Cách hiển thị một lần mua không thành. Mặc định đọc `TNPaywallPurchaseError`; engine có SDK
+    /// tự ném lỗi riêng — RevenueCat — thì map thêm các lỗi đó.)
+    func paywallOutcome(for error: Error) -> TNPaywallPurchaseOutcome
 }
 
 extension TNPaywallEngine {
     package func paywallDidAppear() async {}
+
+    package func paywallOutcome(for error: Error) -> TNPaywallPurchaseOutcome {
+        (error as? any TNPaywallPurchaseError)?.paywallOutcome ?? .failed
+    }
 }
 
 /// What the paywall shows for a plan. (Những gì paywall hiển thị cho một gói.)
-package protocol TNPaywallPackage: Identifiable, Hashable {
+///
+/// `paywallPackageType` rather than `packageType`: RevenueCat's `Package` already has a
+/// `packageType` of its own type. (Dùng `paywallPackageType` thay vì `packageType`: `Package` của
+/// RevenueCat đã có `packageType` với kiểu riêng.)
+package protocol TNPaywallPackage: Hashable {
     var identifier: String { get }
-    var packageType: TNPackageType { get }
+    var paywallPackageType: TNPackageType { get }
     var productIdentifier: String { get }
     var localizedPriceString: String { get }
     var localizedTitle: String { get }
@@ -90,41 +103,4 @@ package enum TNPaywallPurchaseOutcome: Sendable {
 
 package protocol TNPaywallPurchaseError: Error {
     var paywallOutcome: TNPaywallPurchaseOutcome { get }
-}
-
-// MARK: - UIKit Presentation
-
-/// Presents a SwiftUI paywall modally from UIKit. (Hiển thị paywall SwiftUI dạng modal từ UIKit.)
-@MainActor
-package enum TNPaywallPresentation {
-
-    package static func present<Content: View>(_ view: Content, from viewController: UIViewController) {
-        let host = UIHostingController(rootView: view)
-        host.modalPresentationStyle = .pageSheet
-
-        if let sheet = host.sheetPresentationController {
-            sheet.detents = [.large()]
-            sheet.prefersGrabberVisible = true
-            sheet.preferredCornerRadius = 24
-        }
-
-        // Presenting from a controller that already has something presented silently does
-        // nothing, so walk to the top of the stack first.
-        topMost(from: viewController).present(host, animated: true)
-    }
-
-    /// Walks the hierarchy to the controller actually on screen.
-    /// (Đi theo cây view controller tới controller đang thật sự hiển thị.)
-    package static func topMost(from controller: UIViewController) -> UIViewController {
-        if let presented = controller.presentedViewController {
-            return topMost(from: presented)
-        }
-        if let navigation = controller as? UINavigationController {
-            return navigation.visibleViewController.map(topMost(from:)) ?? navigation
-        }
-        if let tab = controller as? UITabBarController {
-            return tab.selectedViewController.map(topMost(from:)) ?? tab
-        }
-        return controller
-    }
 }
