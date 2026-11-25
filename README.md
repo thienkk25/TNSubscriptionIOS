@@ -13,17 +13,12 @@ A reusable Swift Package for iOS subscription management, with **three interchan
 
 ### Used in production (Đang chạy thực tế)
 
-| App | Engine | Version |
-|---|---|---|
-| [GameLens AI](https://apps.apple.com/us/app/gamelens-ai/id6787904202) | `TNSubscriptionIOS` (RevenueCat) | 1.1.3 |
-| [PitchLab Soccer](https://apps.apple.com/us/app/pitchlab-soccer/id6774099988) | `TNSubscriptionIOS` (RevenueCat) | 1.1.3 |
+| App | Engine |
+|---|---|
+| [GameLens AI](https://apps.apple.com/us/app/gamelens-ai/id6787904202) | `TNSubscriptionIOS` (RevenueCat) |
+| [PitchLab Soccer](https://apps.apple.com/us/app/pitchlab-soccer/id6774099988) | `TNSubscriptionIOS` (RevenueCat) |
 
 …plus other apps not listed here. (…cùng nhiều app khác không liệt kê ở đây.)
-
-The RevenueCat engine's purchase, restore and entitlement logic is unchanged from 1.1.3 to 1.3.0;
-1.3.0 moves the configuration into a shared module and adds a savings badge to the built-in paywall.
-(Logic mua, khôi phục và xác định quyền lợi của engine RevenueCat không đổi từ 1.1.3 tới 1.3.0;
-bản 1.3.0 chuyển cấu hình sang module chung và thêm nhãn tiết kiệm vào paywall có sẵn.)
 
 These apps have paying subscribers and run the RevenueCat engine. `TNSubscriptionCore` and
 `TNSubscriptionAdapty` are covered by automated tests but are not yet used in a shipping app.
